@@ -58,9 +58,10 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 		baseDir = filepath.Join(home, ".kimi", "sessions")
 	}
 
-	var sessions []provider.SessionInfo
+	// Phase 1: Walk directories, collect all session paths (sequential, fast)
+	var paths []string
+	pathToHash := make(map[string]string)
 
-	// Walk the two-level directory structure: baseDir/<hash>/<uuid>/
 	workDirs, err := os.ReadDir(baseDir)
 	if err != nil {
 		return nil, err
@@ -90,13 +91,15 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 				continue
 			}
 
-			info, err := parseSession(sessionPath, workDirHash)
-			if err != nil {
-				continue
-			}
-			sessions = append(sessions, info)
+			paths = append(paths, sessionPath)
+			pathToHash[sessionPath] = workDirHash
 		}
 	}
+
+	// Phase 2: Parse all sessions in parallel
+	sessions := provider.ParseParallel(paths, 0, func(path string) (provider.SessionInfo, error) {
+		return parseSession(path, pathToHash[path])
+	})
 
 	return sessions, nil
 }

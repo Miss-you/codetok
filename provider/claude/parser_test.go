@@ -70,6 +70,119 @@ func TestParseClaudeSession_ValidData(t *testing.T) {
 	}
 }
 
+func TestParseClaudeSession_Dedup(t *testing.T) {
+	dir := t.TempDir()
+	// Simulate streaming: the same messageId:requestId appears 3 times with
+	// increasing token counts. Only the last entry should be counted.
+	// Also include a second unique message to verify independent messages sum correctly.
+	content := `{"type":"user","userType":"external","sessionId":"s1","timestamp":"2026-02-15T09:59:00.000Z","message":{"role":"user","content":"Hello"}}
+{"type":"assistant","requestId":"req-A","sessionId":"s1","timestamp":"2026-02-15T10:00:00.000Z","message":{"id":"msg-A","role":"assistant","content":[{"type":"text","text":"partial 1"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":5}}}
+{"type":"assistant","requestId":"req-A","sessionId":"s1","timestamp":"2026-02-15T10:00:01.000Z","message":{"id":"msg-A","role":"assistant","content":[{"type":"text","text":"partial 2"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":15}}}
+{"type":"assistant","requestId":"req-A","sessionId":"s1","timestamp":"2026-02-15T10:00:02.000Z","message":{"id":"msg-A","role":"assistant","content":[{"type":"text","text":"final"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":30}}}
+{"type":"user","userType":"external","sessionId":"s1","timestamp":"2026-02-15T10:01:00.000Z","message":{"role":"user","content":"More"}}
+{"type":"assistant","requestId":"req-B","sessionId":"s1","timestamp":"2026-02-15T10:02:00.000Z","message":{"id":"msg-B","role":"assistant","content":[{"type":"text","text":"second reply"}],"usage":{"input_tokens":200,"cache_creation_input_tokens":20,"cache_read_input_tokens":300,"output_tokens":40}}}
+`
+	sessionPath := filepath.Join(dir, "dedup.jsonl")
+	if err := os.WriteFile(sessionPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := parseSession(sessionPath, "project-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// msg-A:req-A final entry: input=50, cacheCreate=10, cacheRead=100, output=30
+	// msg-B:req-B: input=200, cacheCreate=20, cacheRead=300, output=40
+	// Totals: input=250, cacheCreate=30, cacheRead=400, output=70
+
+	if info.TokenUsage.InputOther != 250 {
+		t.Errorf("InputOther = %d, want 250", info.TokenUsage.InputOther)
+	}
+	if info.TokenUsage.InputCacheCreate != 30 {
+		t.Errorf("InputCacheCreate = %d, want 30", info.TokenUsage.InputCacheCreate)
+	}
+	if info.TokenUsage.InputCacheRead != 400 {
+		t.Errorf("InputCacheRead = %d, want 400", info.TokenUsage.InputCacheRead)
+	}
+	if info.TokenUsage.Output != 70 {
+		t.Errorf("Output = %d, want 70", info.TokenUsage.Output)
+	}
+
+	// Without dedup, output would be 5+15+30+40 = 90
+	// With dedup, it should be 30+40 = 70
+	if info.TokenUsage.Total() != 750 {
+		t.Errorf("Total = %d, want 750", info.TokenUsage.Total())
+	}
+
+	if info.Turns != 2 {
+		t.Errorf("Turns = %d, want 2", info.Turns)
+	}
+}
+
+func TestParseClaudeSession_Dedup_NoIDs(t *testing.T) {
+	dir := t.TempDir()
+	// Entries without messageId or requestId should each be treated as unique
+	content := `{"type":"assistant","sessionId":"s1","timestamp":"2026-02-15T10:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"a"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}}}
+{"type":"assistant","sessionId":"s1","timestamp":"2026-02-15T10:01:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"b"}],"usage":{"input_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}
+`
+	sessionPath := filepath.Join(dir, "no-ids.jsonl")
+	if err := os.WriteFile(sessionPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := parseSession(sessionPath, "project-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Both entries should be counted (no dedup since no IDs)
+	if info.TokenUsage.InputOther != 30 {
+		t.Errorf("InputOther = %d, want 30", info.TokenUsage.InputOther)
+	}
+	if info.TokenUsage.Output != 15 {
+		t.Errorf("Output = %d, want 15", info.TokenUsage.Output)
+	}
+}
+
+func TestParseClaudeSession_Dedup_PartialIDs(t *testing.T) {
+	dir := t.TempDir()
+	// Test edge cases:
+	// 1. Only messageId present (no requestId) — same messageId should dedup
+	// 2. Only requestId present (no messageId) — same requestId should dedup
+	// 3. Same requestId but different messageId — should NOT dedup (different keys)
+	content := `{"type":"assistant","requestId":"","sessionId":"s1","timestamp":"2026-02-15T10:00:00.000Z","message":{"id":"msg-X","role":"assistant","content":[{"type":"text","text":"a"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}}}
+{"type":"assistant","requestId":"","sessionId":"s1","timestamp":"2026-02-15T10:00:01.000Z","message":{"id":"msg-X","role":"assistant","content":[{"type":"text","text":"a final"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":20}}}
+{"type":"assistant","requestId":"req-Y","sessionId":"s1","timestamp":"2026-02-15T10:01:00.000Z","message":{"id":"","role":"assistant","content":[{"type":"text","text":"b"}],"usage":{"input_tokens":30,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}
+{"type":"assistant","requestId":"req-Y","sessionId":"s1","timestamp":"2026-02-15T10:01:01.000Z","message":{"id":"","role":"assistant","content":[{"type":"text","text":"b final"}],"usage":{"input_tokens":30,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":25}}}
+{"type":"assistant","requestId":"req-Z","sessionId":"s1","timestamp":"2026-02-15T10:02:00.000Z","message":{"id":"msg-A","role":"assistant","content":[{"type":"text","text":"c"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":15}}}
+{"type":"assistant","requestId":"req-Z","sessionId":"s1","timestamp":"2026-02-15T10:02:01.000Z","message":{"id":"msg-B","role":"assistant","content":[{"type":"text","text":"d"}],"usage":{"input_tokens":60,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":30}}}
+`
+	sessionPath := filepath.Join(dir, "partial-ids.jsonl")
+	if err := os.WriteFile(sessionPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := parseSession(sessionPath, "project-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Key "msg-X:" — two entries, last wins: input=10, output=20
+	// Key ":req-Y" — two entries, last wins: input=30, output=25
+	// Key "msg-A:req-Z" — one entry: input=50, output=15
+	// Key "msg-B:req-Z" — one entry: input=60, output=30
+	// (msg-A:req-Z and msg-B:req-Z are distinct keys because messageId differs)
+	//
+	// Totals: input = 10+30+50+60 = 150, output = 20+25+15+30 = 90
+	if info.TokenUsage.InputOther != 150 {
+		t.Errorf("InputOther = %d, want 150", info.TokenUsage.InputOther)
+	}
+	if info.TokenUsage.Output != 90 {
+		t.Errorf("Output = %d, want 90", info.TokenUsage.Output)
+	}
+}
+
 func TestParseClaudeSession_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	emptyFile := filepath.Join(dir, "empty.jsonl")

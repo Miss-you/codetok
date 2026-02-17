@@ -65,9 +65,9 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 		baseDir = filepath.Join(home, ".codex", "sessions")
 	}
 
-	var sessions []provider.SessionInfo
+	// Phase 1: Walk directories, collect all session file paths (sequential, fast)
+	var paths []string
 
-	// Walk the three-level date directory structure: baseDir/<year>/<month>/<day>/
 	years, err := os.ReadDir(baseDir)
 	if err != nil {
 		return nil, err
@@ -110,16 +110,16 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 					if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
 						continue
 					}
-					filePath := filepath.Join(dayPath, f.Name())
-					info, err := parseCodexSession(filePath)
-					if err != nil {
-						continue
-					}
-					sessions = append(sessions, info)
+					paths = append(paths, filepath.Join(dayPath, f.Name()))
 				}
 			}
 		}
 	}
+
+	// Phase 2: Parse all sessions in parallel
+	sessions := provider.ParseParallel(paths, 0, func(path string) (provider.SessionInfo, error) {
+		return parseCodexSession(path)
+	})
 
 	return sessions, nil
 }

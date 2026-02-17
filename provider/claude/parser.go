@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,12 +29,14 @@ type claudeEvent struct {
 	Type      string    `json:"type"`
 	UserType  string    `json:"userType"`
 	SessionID string    `json:"sessionId"`
+	RequestID string    `json:"requestId"`
 	Timestamp string    `json:"timestamp"`
 	Message   claudeMsg `json:"message"`
 }
 
 // claudeMsg represents the message field in a Claude Code event.
 type claudeMsg struct {
+	ID      string          `json:"id"`
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
 	Usage   *claudeUsage    `json:"usage"`
@@ -58,9 +61,10 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 		baseDir = filepath.Join(home, ".claude", "projects")
 	}
 
-	var sessions []provider.SessionInfo
+	// Phase 1: Walk directories, collect all session file paths (sequential, fast)
+	var paths []string
+	pathToSlug := make(map[string]string)
 
-	// Walk the two-level structure: baseDir/<project-slug>/<session>.jsonl
 	projectDirs, err := os.ReadDir(baseDir)
 	if err != nil {
 		return nil, err
@@ -87,13 +91,15 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 			}
 
 			sessionPath := filepath.Join(projectPath, entry.Name())
-			info, err := parseSession(sessionPath, projectSlug)
-			if err != nil {
-				continue
-			}
-			sessions = append(sessions, info)
+			paths = append(paths, sessionPath)
+			pathToSlug[sessionPath] = projectSlug
 		}
 	}
+
+	// Phase 2: Parse all sessions in parallel
+	sessions := provider.ParseParallel(paths, 0, func(path string) (provider.SessionInfo, error) {
+		return parseSession(path, pathToSlug[path])
+	})
 
 	return sessions, nil
 }
@@ -113,8 +119,19 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 
 	var turns int
 	var startTime, endTime time.Time
-	var usage provider.TokenUsage
 	var title string
+
+	// dedupUsage maps "messageId:requestId" to the latest usage seen for that key.
+	// Streaming causes the same assistant message to appear multiple times with
+	// increasing token counts; we keep only the last (final) entry per key.
+	type usageEntry struct {
+		inputOther       int
+		inputCacheRead   int
+		inputCacheCreate int
+		output           int
+	}
+	dedupUsage := make(map[string]usageEntry)
+	var uniqueCounter int // fallback counter for entries with no dedup key
 
 	scanner := bufio.NewScanner(f)
 	// Increase buffer size for long lines
@@ -159,10 +176,13 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 				info.SessionID = event.SessionID
 			}
 			if event.Message.Usage != nil {
-				usage.InputOther += event.Message.Usage.InputTokens
-				usage.InputCacheRead += event.Message.Usage.CacheReadInputTokens
-				usage.InputCacheCreate += event.Message.Usage.CacheCreationInputTokens
-				usage.Output += event.Message.Usage.OutputTokens
+				key := dedupKey(event.Message.ID, event.RequestID, &uniqueCounter)
+				dedupUsage[key] = usageEntry{
+					inputOther:       event.Message.Usage.InputTokens,
+					inputCacheRead:   event.Message.Usage.CacheReadInputTokens,
+					inputCacheCreate: event.Message.Usage.CacheCreationInputTokens,
+					output:           event.Message.Usage.OutputTokens,
+				}
 			}
 		}
 
@@ -174,6 +194,15 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 
 	if err := scanner.Err(); err != nil {
 		return provider.SessionInfo{}, err
+	}
+
+	// Sum deduplicated usage entries
+	var usage provider.TokenUsage
+	for _, u := range dedupUsage {
+		usage.InputOther += u.inputOther
+		usage.InputCacheRead += u.inputCacheRead
+		usage.InputCacheCreate += u.inputCacheCreate
+		usage.Output += u.output
 	}
 
 	// Use filename (without extension) as session ID fallback
@@ -189,6 +218,16 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 	info.EndTime = endTime
 
 	return info, nil
+}
+
+// dedupKey builds a deduplication key from messageId and requestId.
+// If both are empty, it returns a unique key so the entry is never merged.
+func dedupKey(messageID, requestID string, counter *int) string {
+	if messageID == "" && requestID == "" {
+		*counter++
+		return "_unique_" + strconv.Itoa(*counter)
+	}
+	return messageID + ":" + requestID
 }
 
 // extractUserText extracts text from a user message content field.
