@@ -1,0 +1,10 @@
+{
+  "session_id": "test-session-001",
+  "title": "Test Session Title",
+  "title_generated": false,
+  "title_generate_attempts": 0,
+  "wire_mtime": 1770983779.7932856,
+  "archived": false,
+  "archived_at": null,
+  "auto_archive_exempt": false
+}

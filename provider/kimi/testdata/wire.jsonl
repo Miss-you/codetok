@@ -1,0 +1,9 @@
+{"type": "metadata", "protocol_version": "1.2"}
+{"timestamp": 1770983424.646556, "message": {"type": "TurnBegin", "payload": {"user_input": [{"type": "text", "text": "hello"}]}}}
+{"timestamp": 1770983424.648874, "message": {"type": "StepBegin", "payload": {"n": 1}}}
+{"timestamp": 1770983426.420942, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.024, "token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}, "message_id": "chatcmpl-aaa"}}}
+{"timestamp": 1770983428.181650, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.031, "token_usage": {"input_other": 150, "output": 75, "input_cache_read": 300, "input_cache_creation": 20}, "message_id": "chatcmpl-bbb"}}}
+{"timestamp": 1770983458.818502, "message": {"type": "TurnEnd", "payload": {}}}
+{"timestamp": 1770983749.387520, "message": {"type": "TurnBegin", "payload": {"user_input": [{"type": "text", "text": "thanks"}]}}}
+{"timestamp": 1770983778.107484, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.060, "token_usage": {"input_other": 200, "output": 100, "input_cache_read": 400, "input_cache_creation": 30}, "message_id": "chatcmpl-ccc"}}}
+{"timestamp": 1770983779.790828, "message": {"type": "TurnEnd", "payload": {}}}

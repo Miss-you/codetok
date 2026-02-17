@@ -1,0 +1,6 @@
+{"type": "metadata", "protocol_version": "1.2"}
+{"timestamp": 1771069800.0, "message": {"type": "TurnBegin", "payload": {"user_input": ["fix parser"]}}}
+{"timestamp": 1771069810.0, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.01, "token_usage": {"input_other": 500, "output": 250, "input_cache_read": 1000, "input_cache_creation": 50}}}}
+{"timestamp": 1771069820.0, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.02, "token_usage": {"input_other": 300, "output": 150, "input_cache_read": 600, "input_cache_creation": 40}}}}
+{"timestamp": 1771069830.0, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.03, "token_usage": {"input_other": 200, "output": 100, "input_cache_read": 400, "input_cache_creation": 20}}}}
+{"timestamp": 1771069840.0, "message": {"type": "TurnEnd", "payload": {}}}
