@@ -24,23 +24,31 @@ Always run `make test` after changes to verify nothing is broken.
 ### Package Layout
 
 - `main.go` — entrypoint, injects version via ldflags
-- `cmd/` — cobra CLI commands (root, daily, session, version)
-- `provider/` — `provider.go` defines the `Provider` interface and shared types (`TokenUsage`, `SessionInfo`, `DailyStats`)
+- `cmd/` — cobra CLI commands (root, daily, session, version); multi-provider with per-provider dir flags
+- `provider/provider.go` — `Provider` interface and shared types (`TokenUsage`, `SessionInfo`, `DailyStats`)
+- `provider/registry.go` — global provider registry with `Register()` / `Registry()` / `FilterProviders()`; providers self-register via `init()`
+- `provider/parallel.go` — `ParseParallel()` helper: bounded goroutine pool with semaphore pattern, default `min(NumCPU, 8)` workers, configurable via `CODETOK_WORKERS` env var
 - `provider/kimi/` — Kimi CLI parser: reads `wire.jsonl`, extracts `StatusUpdate` token usage
-- `stats/` — aggregation logic (group by day, filter by date range)
-- `e2e/` — end-to-end tests that build the binary and test CLI output
+- `provider/claude/` — Claude Code parser: reads session JSONL, extracts `assistant` message usage with streaming dedup (`messageId:requestId` composite key, last-entry-wins)
+- `provider/codex/` — Codex CLI parser: reads rollout JSONL, extracts last cumulative `token_count` event
+- `stats/` — aggregation logic (group by day+provider, filter by date range)
+- `e2e/` — end-to-end tests that build the binary and test CLI output; uses `isolatedArgs()` to prevent cross-provider interference
 
 ### Key Design Decisions
 
-- **Provider interface**: each AI tool has its own parser package under `provider/`. They all implement `provider.Provider` with `Name()` and `CollectSessions(baseDir)`.
-- **Token aggregation**: `StatusUpdate` events in wire.jsonl contain per-request token counts. We sum them per session, then aggregate by day.
+- **Provider auto-registration**: each provider package calls `provider.Register()` in its `init()` function. The CLI imports providers with blank imports (`_ "..."`). No manual wiring needed.
+- **Parallel parsing**: `provider.ParseParallel()` uses a buffered channel as semaphore + `sync.Mutex` for result collection. Workers capped at 8 to avoid file I/O contention. Race-safe (tested with `-race`).
+- **Claude Code dedup**: streaming causes the same assistant message to appear multiple times with increasing token counts (up to 56% over-counting). Deduplicated using `messageId:requestId` composite key, keeping only the final entry.
+- **Codex CLI cumulative tokens**: token counts are cumulative, so we take only the last `token_count` event per session.
 - **No external dependencies beyond cobra**: keep the binary small and dependency-free.
 
 ### Data Flow
 
 ```
-~/.kimi/sessions/**/wire.jsonl
-    → kimi.Provider.CollectSessions()
+~/.kimi/sessions/**/wire.jsonl           → kimi.Provider.CollectSessions()
+~/.claude/projects/**/*.jsonl            → claude.Provider.CollectSessions()  (with dedup)
+~/.codex/sessions/**/*.jsonl             → codex.Provider.CollectSessions()
+    ↓ (all parsed in parallel via ParseParallel)
     → []provider.SessionInfo
     → stats.FilterByDateRange()
     → stats.AggregateByDay()
@@ -59,9 +67,12 @@ Always run `make test` after changes to verify nothing is broken.
 ## Adding a New Provider
 
 1. Create `provider/<name>/parser.go` implementing `provider.Provider`
-2. Add unit tests in `provider/<name>/parser_test.go` with `testdata/` fixtures
-3. Wire into `cmd/daily.go` and `cmd/session.go` (instantiate provider + merge sessions)
-4. Add e2e test fixtures under `e2e/testdata/`
+2. Call `provider.Register(&Provider{})` in `init()` for auto-registration
+3. Use `provider.ParseParallel()` for concurrent file parsing
+4. Add unit tests in `provider/<name>/parser_test.go` with `testdata/` fixtures
+5. Add blank import in `cmd/daily.go` and `cmd/session.go`: `_ "github.com/Miss-you/codetok/provider/<name>"`
+6. Add `--<name>-dir` flag if the provider needs a custom data directory override
+7. Add e2e test fixtures under `e2e/testdata/` and update `isolatedArgs()` in `e2e/e2e_test.go`
 
 ## Release
 
