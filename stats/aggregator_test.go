@@ -20,6 +20,12 @@ func makeSession(id string, startTime time.Time, input, output int) provider.Ses
 	}
 }
 
+func makeProviderSession(id, providerName string, startTime time.Time, input, output int) provider.SessionInfo {
+	s := makeSession(id, startTime, input, output)
+	s.ProviderName = providerName
+	return s
+}
+
 func TestAggregateByDay_SingleDay(t *testing.T) {
 	day := time.Date(2026, 2, 17, 10, 0, 0, 0, time.UTC)
 	sessions := []provider.SessionInfo{
@@ -93,6 +99,61 @@ func TestAggregateByDay_EmptySessions(t *testing.T) {
 	result = AggregateByDay([]provider.SessionInfo{})
 	if result != nil {
 		t.Errorf("got %v, want nil", result)
+	}
+}
+
+func TestAggregateByDay_MultipleProvidersSameDay(t *testing.T) {
+	day := time.Date(2026, 2, 17, 10, 0, 0, 0, time.UTC)
+	sessions := []provider.SessionInfo{
+		makeProviderSession("s1", "kimi", day, 100, 50),
+		makeProviderSession("s2", "claude", day, 200, 75),
+		makeProviderSession("s3", "kimi", day.Add(time.Hour), 150, 60),
+		makeProviderSession("s4", "codex", day.Add(2*time.Hour), 300, 100),
+	}
+
+	result := AggregateByDay(sessions)
+	// Same day, 3 different providers => 3 entries
+	if len(result) != 3 {
+		t.Fatalf("got %d entries, want 3", len(result))
+	}
+
+	// Results should be sorted by date then provider name
+	// All same date, so sorted by provider: claude, codex, kimi
+	if result[0].ProviderName != "claude" {
+		t.Errorf("result[0].ProviderName = %q, want %q", result[0].ProviderName, "claude")
+	}
+	if result[1].ProviderName != "codex" {
+		t.Errorf("result[1].ProviderName = %q, want %q", result[1].ProviderName, "codex")
+	}
+	if result[2].ProviderName != "kimi" {
+		t.Errorf("result[2].ProviderName = %q, want %q", result[2].ProviderName, "kimi")
+	}
+
+	// claude: s2 only
+	if result[0].Sessions != 1 {
+		t.Errorf("claude Sessions = %d, want 1", result[0].Sessions)
+	}
+	if result[0].TokenUsage.InputOther != 200 {
+		t.Errorf("claude InputOther = %d, want 200", result[0].TokenUsage.InputOther)
+	}
+
+	// codex: s4 only
+	if result[1].Sessions != 1 {
+		t.Errorf("codex Sessions = %d, want 1", result[1].Sessions)
+	}
+	if result[1].TokenUsage.Output != 100 {
+		t.Errorf("codex Output = %d, want 100", result[1].TokenUsage.Output)
+	}
+
+	// kimi: s1 + s3
+	if result[2].Sessions != 2 {
+		t.Errorf("kimi Sessions = %d, want 2", result[2].Sessions)
+	}
+	if result[2].TokenUsage.InputOther != 250 {
+		t.Errorf("kimi InputOther = %d, want 250", result[2].TokenUsage.InputOther)
+	}
+	if result[2].TokenUsage.Output != 110 {
+		t.Errorf("kimi Output = %d, want 110", result[2].TokenUsage.Output)
 	}
 }
 

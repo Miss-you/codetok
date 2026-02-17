@@ -10,6 +10,10 @@ import (
 	"github.com/Miss-you/codetok/provider"
 )
 
+func init() {
+	provider.Register(&Provider{})
+}
+
 // Provider implements provider.Provider for the Kimi CLI.
 type Provider struct{}
 
@@ -100,7 +104,8 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 // parseSession parses a single session directory.
 func parseSession(sessionPath, workDirHash string) (provider.SessionInfo, error) {
 	info := provider.SessionInfo{
-		WorkDirHash: workDirHash,
+		ProviderName: "kimi",
+		WorkDirHash:  workDirHash,
 	}
 
 	// Parse metadata.json

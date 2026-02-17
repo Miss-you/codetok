@@ -7,20 +7,29 @@ import (
 	"github.com/Miss-you/codetok/provider"
 )
 
-// AggregateByDay groups sessions by date and sums their token usage.
+// AggregateByDay groups sessions by date and provider, then sums their token usage.
 func AggregateByDay(sessions []provider.SessionInfo) []provider.DailyStats {
 	if len(sessions) == 0 {
 		return nil
 	}
 
-	dayMap := make(map[string]*provider.DailyStats)
+	// Key by "date|provider" to group per-provider per-day.
+	type dayKey struct {
+		date         string
+		providerName string
+	}
+	dayMap := make(map[dayKey]*provider.DailyStats)
 
 	for _, s := range sessions {
-		date := s.StartTime.Format("2006-01-02")
-		ds, ok := dayMap[date]
+		date := "unknown"
+		if !s.StartTime.IsZero() {
+			date = s.StartTime.Format("2006-01-02")
+		}
+		key := dayKey{date: date, providerName: s.ProviderName}
+		ds, ok := dayMap[key]
 		if !ok {
-			ds = &provider.DailyStats{Date: date}
-			dayMap[date] = ds
+			ds = &provider.DailyStats{Date: date, ProviderName: s.ProviderName}
+			dayMap[key] = ds
 		}
 		ds.Sessions++
 		ds.TokenUsage.InputOther += s.TokenUsage.InputOther
@@ -35,7 +44,10 @@ func AggregateByDay(sessions []provider.SessionInfo) []provider.DailyStats {
 	}
 
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].Date < result[j].Date
+		if result[i].Date != result[j].Date {
+			return result[i].Date < result[j].Date
+		}
+		return result[i].ProviderName < result[j].ProviderName
 	})
 
 	return result

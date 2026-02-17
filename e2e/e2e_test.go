@@ -22,6 +22,20 @@ func testdataDir(t *testing.T) string {
 	return dir
 }
 
+// emptyDir returns a path to an empty temp directory (to isolate providers in tests).
+func emptyDir(t *testing.T) string {
+	t.Helper()
+	return t.TempDir()
+}
+
+// isolatedArgs returns args that point all providers to empty dirs except the one being tested.
+func isolatedArgs(t *testing.T, extraArgs ...string) []string {
+	t.Helper()
+	empty := emptyDir(t)
+	base := []string{"--claude-dir", empty, "--codex-dir", empty}
+	return append(base, extraArgs...)
+}
+
 // buildBinary builds the codetok binary and returns its path.
 func buildBinary(t *testing.T) string {
 	t.Helper()
@@ -55,7 +69,8 @@ func runCodetok(t *testing.T, binPath string, args ...string) string {
 func TestDailyCommand_JSONOutput(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
-	output := runCodetok(t, bin, "daily", "--json", "--base-dir", baseDir)
+	args := isolatedArgs(t, "daily", "--json", "--kimi-dir", baseDir)
+	output := runCodetok(t, bin, args...)
 
 	var daily []provider.DailyStats
 	if err := json.Unmarshal([]byte(output), &daily); err != nil {
@@ -66,12 +81,15 @@ func TestDailyCommand_JSONOutput(t *testing.T) {
 		t.Fatalf("expected 2 daily entries, got %d: %s", len(daily), output)
 	}
 
-	// Verify each day has correct session count
+	// Verify each day has correct session count and provider
 	totalSessions := 0
 	totalTokens := 0
 	for _, d := range daily {
 		totalSessions += d.Sessions
 		totalTokens += d.TokenUsage.Total()
+		if d.ProviderName != "kimi" {
+			t.Errorf("expected provider %q, got %q", "kimi", d.ProviderName)
+		}
 	}
 
 	if totalSessions != 2 {
@@ -88,14 +106,16 @@ func TestDailyCommand_JSONOutput(t *testing.T) {
 func TestSessionCommand_JSONOutput(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
-	output := runCodetok(t, bin, "session", "--json", "--base-dir", baseDir)
+	args := isolatedArgs(t, "session", "--json", "--kimi-dir", baseDir)
+	output := runCodetok(t, bin, args...)
 
 	var sessions []struct {
-		SessionID  string              `json:"session_id"`
-		Title      string              `json:"title"`
-		Date       string              `json:"date"`
-		Turns      int                 `json:"turns"`
-		TokenUsage provider.TokenUsage `json:"token_usage"`
+		SessionID    string              `json:"session_id"`
+		ProviderName string              `json:"provider"`
+		Title        string              `json:"title"`
+		Date         string              `json:"date"`
+		Turns        int                 `json:"turns"`
+		TokenUsage   provider.TokenUsage `json:"token_usage"`
 	}
 	if err := json.Unmarshal([]byte(output), &sessions); err != nil {
 		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
@@ -105,10 +125,13 @@ func TestSessionCommand_JSONOutput(t *testing.T) {
 		t.Fatalf("expected 2 sessions, got %d", len(sessions))
 	}
 
-	// Verify session IDs exist
+	// Verify session IDs exist and provider is set
 	ids := map[string]bool{}
 	for _, s := range sessions {
 		ids[s.SessionID] = true
+		if s.ProviderName != "kimi" {
+			t.Errorf("expected provider %q, got %q", "kimi", s.ProviderName)
+		}
 	}
 	if !ids["uuid-1"] || !ids["uuid-2"] {
 		t.Errorf("expected sessions uuid-1 and uuid-2, got %v", ids)
@@ -118,11 +141,15 @@ func TestSessionCommand_JSONOutput(t *testing.T) {
 func TestDailyCommand_TableOutput(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
-	output := runCodetok(t, bin, "daily", "--base-dir", baseDir)
+	args := isolatedArgs(t, "daily", "--kimi-dir", baseDir)
+	output := runCodetok(t, bin, args...)
 
 	// Verify header
 	if !strings.Contains(output, "Date") {
 		t.Error("table output missing Date header")
+	}
+	if !strings.Contains(output, "Provider") {
+		t.Error("table output missing Provider header")
 	}
 	if !strings.Contains(output, "Sessions") {
 		t.Error("table output missing Sessions header")
@@ -136,6 +163,11 @@ func TestDailyCommand_TableOutput(t *testing.T) {
 		t.Error("table output missing TOTAL summary row")
 	}
 
+	// Verify provider name appears in data rows
+	if !strings.Contains(output, "kimi") {
+		t.Error("table output missing kimi provider name")
+	}
+
 	// Should have at least header + 2 data rows + TOTAL row = 4 lines minimum
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	if len(lines) < 4 {
@@ -146,11 +178,15 @@ func TestDailyCommand_TableOutput(t *testing.T) {
 func TestSessionCommand_TableOutput(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
-	output := runCodetok(t, bin, "session", "--base-dir", baseDir)
+	args := isolatedArgs(t, "session", "--kimi-dir", baseDir)
+	output := runCodetok(t, bin, args...)
 
 	// Verify header columns
 	if !strings.Contains(output, "Date") {
 		t.Error("table output missing Date header")
+	}
+	if !strings.Contains(output, "Provider") {
+		t.Error("table output missing Provider header")
 	}
 	if !strings.Contains(output, "Session") {
 		t.Error("table output missing Session header")
@@ -169,10 +205,40 @@ func TestSessionCommand_TableOutput(t *testing.T) {
 		t.Error("table output missing session title 'Implement feature X'")
 	}
 
+	// Verify provider name appears
+	if !strings.Contains(output, "kimi") {
+		t.Error("table output missing kimi provider name")
+	}
+
 	// Should have at least header + 2 data rows + TOTAL = 4 lines
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	if len(lines) < 4 {
 		t.Errorf("expected at least 4 lines in table output, got %d:\n%s", len(lines), output)
+	}
+}
+
+func TestDailyCommand_ProviderFilter(t *testing.T) {
+	bin := buildBinary(t)
+	baseDir := testdataDir(t)
+
+	// Filter by kimi should return results
+	args := isolatedArgs(t, "daily", "--json", "--provider", "kimi", "--kimi-dir", baseDir)
+	output := runCodetok(t, bin, args...)
+	var daily []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+	if len(daily) != 2 {
+		t.Fatalf("expected 2 daily entries with kimi filter, got %d", len(daily))
+	}
+
+	// Filter by nonexistent provider should return empty
+	output = runCodetok(t, bin, "daily", "--json", "--provider", "nonexistent")
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+	if len(daily) != 0 {
+		t.Errorf("expected 0 daily entries with nonexistent filter, got %d", len(daily))
 	}
 }
 

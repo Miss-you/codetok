@@ -22,20 +22,22 @@ func (t TokenUsage) Total() int {
 
 // SessionInfo represents a single coding session with aggregated token usage.
 type SessionInfo struct {
-	SessionID   string
-	Title       string
-	WorkDirHash string
-	StartTime   time.Time
-	EndTime     time.Time
-	Turns       int
-	TokenUsage  TokenUsage
+	ProviderName string
+	SessionID    string
+	Title        string
+	WorkDirHash  string
+	StartTime    time.Time
+	EndTime      time.Time
+	Turns        int
+	TokenUsage   TokenUsage
 }
 
 // DailyStats represents aggregated token usage for a single day.
 type DailyStats struct {
-	Date       string     `json:"date"` // "2006-01-02"
-	Sessions   int        `json:"sessions"`
-	TokenUsage TokenUsage `json:"token_usage"`
+	Date         string     `json:"date"` // "2006-01-02"
+	ProviderName string     `json:"provider"`
+	Sessions     int        `json:"sessions"`
+	TokenUsage   TokenUsage `json:"token_usage"`
 }
 
 // Provider defines the interface for collecting session data from a CLI tool.

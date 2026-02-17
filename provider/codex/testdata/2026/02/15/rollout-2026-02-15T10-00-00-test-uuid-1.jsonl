@@ -1,0 +1,6 @@
+{"timestamp":"2026-02-15T10:00:00.000Z","type":"session_meta","payload":{"id":"test-uuid-1","timestamp":"2026-02-15T10:00:00.000Z","cwd":"/test","cli_version":"0.47.0"}}
+{"timestamp":"2026-02-15T10:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"Hello world","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-02-15T10:00:02.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","limit_name":null}}}
+{"timestamp":"2026-02-15T10:01:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":100,"reasoning_output_tokens":20,"total_tokens":600},"model_context_window":258400},"rate_limits":{"limit_id":"codex","limit_name":null}}}
+{"timestamp":"2026-02-15T10:01:30.000Z","type":"event_msg","payload":{"type":"user_message","message":"Follow up question","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-02-15T10:02:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1500,"cached_input_tokens":800,"output_tokens":300,"reasoning_output_tokens":50,"total_tokens":1800},"model_context_window":258400},"rate_limits":{"limit_id":"codex","limit_name":null}}}

@@ -1,0 +1,232 @@
+package codex
+
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/Miss-you/codetok/provider"
+)
+
+func init() {
+	provider.Register(&Provider{})
+}
+
+// Provider implements provider.Provider for the Codex CLI.
+type Provider struct{}
+
+// Name returns the provider name.
+func (p *Provider) Name() string {
+	return "codex"
+}
+
+// codexEvent represents a single line in a Codex rollout JSONL file.
+type codexEvent struct {
+	Timestamp string          `json:"timestamp"`
+	Type      string          `json:"type"`
+	Payload   json.RawMessage `json:"payload"`
+}
+
+// sessionMetaPayload holds the session_meta payload.
+type sessionMetaPayload struct {
+	ID        string `json:"id"`
+	Timestamp string `json:"timestamp"`
+	Cwd       string `json:"cwd"`
+}
+
+// eventMsgPayload holds the event_msg payload envelope.
+type eventMsgPayload struct {
+	Type    string          `json:"type"`
+	Message string          `json:"message"`
+	Info    json.RawMessage `json:"info"`
+}
+
+// tokenCountInfo holds the token_count info field.
+type tokenCountInfo struct {
+	TotalTokenUsage struct {
+		InputTokens       int `json:"input_tokens"`
+		CachedInputTokens int `json:"cached_input_tokens"`
+		OutputTokens      int `json:"output_tokens"`
+		TotalTokens       int `json:"total_tokens"`
+	} `json:"total_token_usage"`
+}
+
+// CollectSessions scans baseDir for Codex session files and returns session info.
+// The expected directory layout is: baseDir/<year>/<month>/<day>/rollout-*.jsonl
+func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, error) {
+	if baseDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		baseDir = filepath.Join(home, ".codex", "sessions")
+	}
+
+	var sessions []provider.SessionInfo
+
+	// Walk the three-level date directory structure: baseDir/<year>/<month>/<day>/
+	years, err := os.ReadDir(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, y := range years {
+		if !y.IsDir() {
+			continue
+		}
+		yearPath := filepath.Join(baseDir, y.Name())
+
+		months, err := os.ReadDir(yearPath)
+		if err != nil {
+			continue
+		}
+
+		for _, m := range months {
+			if !m.IsDir() {
+				continue
+			}
+			monthPath := filepath.Join(yearPath, m.Name())
+
+			days, err := os.ReadDir(monthPath)
+			if err != nil {
+				continue
+			}
+
+			for _, d := range days {
+				if !d.IsDir() {
+					continue
+				}
+				dayPath := filepath.Join(monthPath, d.Name())
+
+				files, err := os.ReadDir(dayPath)
+				if err != nil {
+					continue
+				}
+
+				for _, f := range files {
+					if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+						continue
+					}
+					filePath := filepath.Join(dayPath, f.Name())
+					info, err := parseCodexSession(filePath)
+					if err != nil {
+						continue
+					}
+					sessions = append(sessions, info)
+				}
+			}
+		}
+	}
+
+	return sessions, nil
+}
+
+// parseCodexSession parses a single Codex rollout JSONL file.
+func parseCodexSession(path string) (provider.SessionInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return provider.SessionInfo{}, err
+	}
+	defer f.Close()
+
+	info := provider.SessionInfo{
+		ProviderName: "codex",
+	}
+
+	scanner := bufio.NewScanner(f)
+	// Increase buffer size for long lines
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+
+	var lastTokenUsage *provider.TokenUsage
+	var startTime, endTime time.Time
+	var turns int
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var event codexEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			// Skip malformed lines
+			continue
+		}
+
+		// Track timestamps for start/end
+		if event.Timestamp != "" {
+			ts, err := time.Parse(time.RFC3339Nano, event.Timestamp)
+			if err == nil {
+				if startTime.IsZero() || ts.Before(startTime) {
+					startTime = ts
+				}
+				if ts.After(endTime) {
+					endTime = ts
+				}
+			}
+		}
+
+		switch event.Type {
+		case "session_meta":
+			var meta sessionMetaPayload
+			if err := json.Unmarshal(event.Payload, &meta); err != nil {
+				continue
+			}
+			info.SessionID = meta.ID
+			if meta.Timestamp != "" {
+				ts, err := time.Parse(time.RFC3339Nano, meta.Timestamp)
+				if err == nil {
+					startTime = ts
+				}
+			}
+
+		case "event_msg":
+			var msg eventMsgPayload
+			if err := json.Unmarshal(event.Payload, &msg); err != nil {
+				continue
+			}
+
+			switch msg.Type {
+			case "user_message":
+				turns++
+				if info.Title == "" && msg.Message != "" {
+					info.Title = msg.Message
+				}
+
+			case "token_count":
+				if msg.Info == nil || string(msg.Info) == "null" {
+					continue
+				}
+				var tci tokenCountInfo
+				if err := json.Unmarshal(msg.Info, &tci); err != nil {
+					continue
+				}
+				tu := tci.TotalTokenUsage
+				// Cumulative: take the latest value (overwrite)
+				usage := provider.TokenUsage{
+					InputOther:     tu.InputTokens - tu.CachedInputTokens,
+					InputCacheRead: tu.CachedInputTokens,
+					Output:         tu.OutputTokens,
+					// Codex doesn't report InputCacheCreate
+				}
+				lastTokenUsage = &usage
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return provider.SessionInfo{}, err
+	}
+
+	if lastTokenUsage != nil {
+		info.TokenUsage = *lastTokenUsage
+	}
+	info.Turns = turns
+	info.StartTime = startTime
+	info.EndTime = endTime
+
+	return info, nil
+}
