@@ -102,7 +102,7 @@ Flags: same as `codetok daily`.
 
 ### `codetok version`
 
-Print build version, commit hash, and build date.
+Print version information. Commit hash and build date are shown when available.
 
 ## How It Works
 
