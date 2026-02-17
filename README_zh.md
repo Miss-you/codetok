@@ -102,7 +102,7 @@ TOTAL                                                                           
 
 ### `codetok version`
 
-输出构建版本号、commit hash 和构建时间。
+输出版本信息；当 commit hash 与构建时间可用时会一并显示。
 
 ## 工作原理
 

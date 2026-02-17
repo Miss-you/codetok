@@ -7,16 +7,14 @@ import (
 )
 
 var (
-	version    = "dev"
-	commitHash = "none"
-	buildDate  = "unknown"
+	version    = defaultVersion
+	commitHash = defaultCommitHash
+	buildDate  = defaultBuildDate
 )
 
 // SetVersionInfo sets the build version info from ldflags.
 func SetVersionInfo(v, c, d string) {
-	version = v
-	commitHash = c
-	buildDate = d
+	version, commitHash, buildDate = resolveVersionInfo(v, c, d, readBuildInfo())
 }
 
 var rootCmd = &cobra.Command{
@@ -31,7 +29,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("codetok %s (commit: %s, built: %s)\n", version, commitHash, buildDate)
+		fmt.Println(formatVersionLine(version, commitHash, buildDate))
 	},
 }
 
