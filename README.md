@@ -1,6 +1,6 @@
 # codetok
 
-[![CI](https://github.com/Miss-you/codetok/actions/workflows/ci.yml/badge.svg)](https://github.com/Miss-you/codetok/actions/workflows/ci.yml)
+[![CI](https://github.com/miss-you/codetok/actions/workflows/ci.yml/badge.svg)](https://github.com/miss-you/codetok/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 
@@ -24,13 +24,15 @@ Planned:
 ### From source
 
 ```bash
-go install github.com/Miss-you/codetok@latest
+go install github.com/miss-you/codetok@latest
 ```
+
+Note: Go module paths are case-sensitive. Use `github.com/miss-you/codetok` exactly (all lowercase).
 
 ### Build locally
 
 ```bash
-git clone https://github.com/Miss-you/codetok.git
+git clone https://github.com/miss-you/codetok.git
 cd codetok
 make build
 # Binary at ./bin/codetok
@@ -38,7 +40,7 @@ make build
 
 ### From release
 
-Download pre-built binaries from the [Releases](https://github.com/Miss-you/codetok/releases) page.
+Download pre-built binaries from the [Releases](https://github.com/miss-you/codetok/releases) page.
 
 ## Quick Start
 
@@ -175,7 +177,7 @@ make help
 ```go
 package myprovider
 
-import "github.com/Miss-you/codetok/provider"
+import "github.com/miss-you/codetok/provider"
 
 func init() {
     provider.Register(&Provider{})
@@ -193,7 +195,7 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 
 3. Import the package in `cmd/daily.go` and `cmd/session.go` with a blank import:
    ```go
-   _ "github.com/Miss-you/codetok/provider/myprovider"
+   _ "github.com/miss-you/codetok/provider/myprovider"
    ```
 4. Add `--myprovider-dir` flag if needed
 

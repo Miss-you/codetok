@@ -15,7 +15,7 @@ linters:
 
 linters-settings:
   goimports:
-    local-prefixes: github.com/Miss-you/codetok
+    local-prefixes: github.com/miss-you/codetok
   misspell:
     locale: US
 

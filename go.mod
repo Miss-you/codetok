@@ -1,4 +1,4 @@
-module github.com/Miss-you/codetok
+module github.com/miss-you/codetok
 
 go 1.21.0
 

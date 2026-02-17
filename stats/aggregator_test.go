@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Miss-you/codetok/provider"
+	"github.com/miss-you/codetok/provider"
 )
 
 func makeSession(id string, startTime time.Time, input, output int) provider.SessionInfo {

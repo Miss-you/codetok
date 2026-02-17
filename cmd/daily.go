@@ -9,11 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Miss-you/codetok/provider"
-	_ "github.com/Miss-you/codetok/provider/claude"
-	_ "github.com/Miss-you/codetok/provider/codex"
-	_ "github.com/Miss-you/codetok/provider/kimi"
-	"github.com/Miss-you/codetok/stats"
+	"github.com/miss-you/codetok/provider"
+	_ "github.com/miss-you/codetok/provider/claude"
+	_ "github.com/miss-you/codetok/provider/codex"
+	_ "github.com/miss-you/codetok/provider/kimi"
+	"github.com/miss-you/codetok/stats"
 )
 
 var dailyCmd = &cobra.Command{
