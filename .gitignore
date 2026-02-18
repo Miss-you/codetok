@@ -1,5 +1,7 @@
 # Binaries
 bin/
+!npm/bin/
+!npm/bin/codetok.js
 *.exe
 *.exe~
 *.dll
@@ -29,3 +31,8 @@ Thumbs.db
 
 # GoReleaser
 dist/
+
+# npm package artifacts
+npm/node_modules/
+npm/vendor/codetok
+npm/vendor/codetok.exe

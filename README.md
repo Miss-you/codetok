@@ -21,6 +21,12 @@ Planned:
 
 ## Installation
 
+### From npm
+
+```bash
+npm install -g codetok
+```
+
 ### From source
 
 ```bash
@@ -41,6 +47,11 @@ make build
 ### From release
 
 Download pre-built binaries from the [Releases](https://github.com/miss-you/codetok/releases) page.
+
+Release automation:
+- Pushing a `v*` tag publishes GitHub release artifacts.
+- The same workflow then publishes the npm package automatically.
+- Repository maintainers must configure `NPM_TOKEN` in GitHub Actions secrets.
 
 ## Quick Start
 

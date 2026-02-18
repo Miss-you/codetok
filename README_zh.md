@@ -21,6 +21,12 @@
 
 ## 安装
 
+### 从 npm 安装
+
+```bash
+npm install -g codetok
+```
+
 ### 从源码安装
 
 ```bash
@@ -41,6 +47,11 @@ make build
 ### 下载预编译版本
 
 前往 [Releases](https://github.com/miss-you/codetok/releases) 页面下载。
+
+发布自动化：
+- 推送 `v*` tag 后会发布 GitHub Release 二进制。
+- 同一个 workflow 会继续自动发布 npm 包。
+- 仓库维护者需要在 GitHub Actions Secrets 中配置 `NPM_TOKEN`。
 
 ## 快速开始
 
