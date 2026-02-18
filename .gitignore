@@ -29,3 +29,8 @@ Thumbs.db
 
 # GoReleaser
 dist/
+
+# npm package artifacts
+npm/node_modules/
+npm/vendor/codetok
+npm/vendor/codetok.exe

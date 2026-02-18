@@ -1,0 +1,53 @@
+{
+  "name": "codetok",
+  "version": "0.0.0-dev",
+  "description": "Track and aggregate token usage across AI coding CLI tools",
+  "license": "MIT",
+  "homepage": "https://github.com/miss-you/codetok#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/miss-you/codetok.git"
+  },
+  "bugs": {
+    "url": "https://github.com/miss-you/codetok/issues"
+  },
+  "bin": {
+    "codetok": "bin/codetok.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.mjs"
+  },
+  "dependencies": {
+    "extract-zip": "^2.0.1",
+    "tar": "^7.4.3"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "keywords": [
+    "cli",
+    "go",
+    "token",
+    "usage",
+    "codetok"
+  ],
+  "files": [
+    "bin/",
+    "scripts/",
+    "vendor/",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
