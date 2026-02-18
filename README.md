@@ -45,7 +45,7 @@ Download pre-built binaries from the [Releases](https://github.com/miss-you/code
 ## Quick Start
 
 ```bash
-# Show daily token usage breakdown (all providers)
+# Show daily token usage breakdown (last 7 days, unit=k by default)
 codetok daily
 
 # Show per-session token usage
@@ -53,6 +53,18 @@ codetok session
 
 # Output as JSON
 codetok daily --json
+
+# Show all historical daily usage
+codetok daily --all
+
+# Use a custom rolling window
+codetok daily --days 30
+
+# Show raw integers instead of unit-scaled values
+codetok daily --unit raw
+
+# Force display in millions
+codetok daily --unit m
 
 # Filter by date range
 codetok daily --since 2026-02-01 --until 2026-02-15
@@ -62,18 +74,25 @@ codetok daily --provider claude
 codetok session --provider kimi
 ```
 
+Tip: if you changed code and run `./bin/codetok`, run `make build` first to refresh the binary.
+
 ## Usage
 
 ### `codetok daily`
 
 Show daily token usage breakdown.
+By default, it shows the last 7 days.
+Use `--all` for full history, or use `--since`/`--until` for an explicit date range.
+Table output displays token columns in `k` by default (`--unit k`).
+Use `--unit raw`/`k`/`m`/`g` to control display scale.
+JSON output always keeps raw integer token counts.
 
 ```
-Date        Provider  Sessions  Input    Output  Cache Read  Cache Create  Total
-2026-02-07  kimi      5         109822   15356   632985      0             758163
-2026-02-08  claude    2         95046    7010    274232      0             376288
-2026-02-15  codex     21        938566   149287  7869696     0             8957549
-TOTAL                 49        2965044  369854  24638673    0             27973571
+Date        Provider  Sessions  Input(k)  Output(k)  Cache Read(k)  Cache Create(k)  Total(k)
+2026-02-07  kimi      5         109.82k  15.36k  632.98k     0.00k         758.16k
+2026-02-08  claude    2         95.05k   7.01k   274.23k     0.00k         376.29k
+2026-02-15  codex     21        938.57k  149.29k 7869.70k    0.00k         8957.55k
+TOTAL                 49        2965.04k 369.85k 24638.67k   0.00k         27973.57k
 ```
 
 Flags:
@@ -81,6 +100,9 @@ Flags:
 | Flag | Description |
 |------|-------------|
 | `--json` | Output as JSON |
+| `--days` | Lookback window in days when `--since`/`--until` are not set (default: `7`) |
+| `--all` | Include all historical sessions (cannot be used with `--days`, `--since`, `--until`) |
+| `--unit` | Token display unit for table output: `raw`, `k`, `m`, `g` (default: `k`) |
 | `--since` | Start date filter (format: `2006-01-02`) |
 | `--until` | End date filter (format: `2006-01-02`) |
 | `--provider` | Filter by provider name (e.g. `kimi`, `claude`, `codex`) |
@@ -88,6 +110,12 @@ Flags:
 | `--kimi-dir` | Override Kimi CLI data directory |
 | `--claude-dir` | Override Claude Code data directory |
 | `--codex-dir` | Override Codex CLI data directory |
+
+Common combinations:
+- `codetok daily` — last 7 days, table unit `k`
+- `codetok daily --unit raw` — last 7 days, raw integer token counts
+- `codetok daily --days 30 --unit m` — last 30 days, displayed in millions
+- `codetok daily --all --unit g` — full history, displayed in billions
 
 ### `codetok session`
 
@@ -100,7 +128,7 @@ Date        Provider  Session                               Title               
 TOTAL                                                                                  2965044   369854  27973571
 ```
 
-Flags: same as `codetok daily`.
+Flags: `--json`, `--since`, `--until`, `--provider`, `--base-dir`, `--kimi-dir`, `--claude-dir`, `--codex-dir`.
 
 ### `codetok version`
 
@@ -109,6 +137,11 @@ Print version information. Commit hash and build date are shown when available.
 ## How It Works
 
 codetok reads local session data that AI coding CLIs store on disk. Each provider has its own parser that understands the tool's data format. All session files are parsed in parallel using bounded goroutines (default: `min(NumCPU, 8)`, configurable via `CODETOK_WORKERS` env var).
+
+Statistics scope:
+- Token usage is computed by aggregating token counters from existing local session logs.
+- codetok does not call provider APIs.
+- Sessions are counted only if their local log files currently exist.
 
 **Kimi CLI** — `~/.kimi/sessions/<work-dir-hash>/<session-uuid>/wire.jsonl`
 - Parses `StatusUpdate` events containing `token_usage`

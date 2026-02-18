@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -22,10 +24,16 @@ var dailyCmd = &cobra.Command{
 	RunE:  runDaily,
 }
 
+const defaultDailyDays = 7
+const defaultTokenUnit = "k"
+
 func init() {
 	dailyCmd.Flags().Bool("json", false, "Output as JSON")
 	dailyCmd.Flags().String("since", "", "Start date filter (format: 2006-01-02)")
 	dailyCmd.Flags().String("until", "", "End date filter (format: 2006-01-02)")
+	dailyCmd.Flags().Int("days", defaultDailyDays, "Lookback window in days when --since/--until are not set")
+	dailyCmd.Flags().Bool("all", false, "Include all historical sessions")
+	dailyCmd.Flags().String("unit", defaultTokenUnit, "Token display unit for table output: raw, k, m, g")
 	dailyCmd.Flags().String("provider", "", "Filter by provider name (e.g. kimi, claude, codex)")
 	dailyCmd.Flags().String("base-dir", "", "Override default data directory (applies to all providers)")
 	dailyCmd.Flags().String("kimi-dir", "", "Override Kimi data directory")
@@ -43,8 +51,16 @@ func runDaily(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	sinceStr, _ := cmd.Flags().GetString("since")
 	untilStr, _ := cmd.Flags().GetString("until")
+	days, _ := cmd.Flags().GetInt("days")
+	allHistory, _ := cmd.Flags().GetBool("all")
+	unitStr, _ := cmd.Flags().GetString("unit")
 	providerFilter, _ := cmd.Flags().GetString("provider")
 	baseDir, _ := cmd.Flags().GetString("base-dir")
+
+	unit, err := resolveTokenUnit(unitStr)
+	if err != nil {
+		return err
+	}
 
 	providers := provider.FilterProviders(provider.Registry(), providerFilter)
 
@@ -66,21 +82,16 @@ func runDaily(cmd *cobra.Command, args []string) error {
 		allSessions = append(allSessions, sessions...)
 	}
 
-	var err error
-	var since, until time.Time
-	if sinceStr != "" {
-		since, err = time.Parse("2006-01-02", sinceStr)
-		if err != nil {
-			return fmt.Errorf("invalid --since date: %w", err)
-		}
-	}
-	if untilStr != "" {
-		until, err = time.Parse("2006-01-02", untilStr)
-		if err != nil {
-			return fmt.Errorf("invalid --until date: %w", err)
-		}
-		// Include the entire "until" day
-		until = until.Add(24*time.Hour - time.Nanosecond)
+	since, until, err := resolveDailyDateRange(
+		sinceStr,
+		untilStr,
+		days,
+		allHistory,
+		cmd.Flags().Changed("days"),
+		time.Now(),
+	)
+	if err != nil {
+		return err
 	}
 
 	allSessions = stats.FilterByDateRange(allSessions, since, until)
@@ -95,27 +106,134 @@ func runDaily(cmd *cobra.Command, args []string) error {
 		return enc.Encode(daily)
 	}
 
-	printDailyTable(daily)
+	printDailyTable(daily, unit)
 	return nil
 }
 
-func printDailyTable(daily []provider.DailyStats) {
+type tokenUnit string
+
+const (
+	tokenUnitRaw tokenUnit = "raw"
+	tokenUnitK   tokenUnit = "k"
+	tokenUnitM   tokenUnit = "m"
+	tokenUnitG   tokenUnit = "g"
+)
+
+func resolveTokenUnit(unit string) (tokenUnit, error) {
+	switch strings.ToLower(strings.TrimSpace(unit)) {
+	case "raw":
+		return tokenUnitRaw, nil
+	case "k":
+		return tokenUnitK, nil
+	case "m":
+		return tokenUnitM, nil
+	case "g":
+		return tokenUnitG, nil
+	default:
+		return "", fmt.Errorf("invalid --unit: %q (allowed: raw, k, m, g)", unit)
+	}
+}
+
+func tokenUnitScale(unit tokenUnit) float64 {
+	switch unit {
+	case tokenUnitK:
+		return 1_000
+	case tokenUnitM:
+		return 1_000_000
+	case tokenUnitG:
+		return 1_000_000_000
+	default:
+		return 1
+	}
+}
+
+func formatTokenByUnit(value int, unit tokenUnit) string {
+	if unit == tokenUnitRaw {
+		return strconv.Itoa(value)
+	}
+	scaled := float64(value) / tokenUnitScale(unit)
+	return fmt.Sprintf("%.2f%s", scaled, string(unit))
+}
+
+func tokenHeader(name string, unit tokenUnit) string {
+	if unit == tokenUnitRaw {
+		return name
+	}
+	return fmt.Sprintf("%s(%s)", name, unit)
+}
+
+func resolveDailyDateRange(
+	sinceStr, untilStr string,
+	days int,
+	allHistory, daysChanged bool,
+	now time.Time,
+) (time.Time, time.Time, error) {
+	if days < 1 {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid --days: must be >= 1")
+	}
+	if allHistory {
+		if sinceStr != "" || untilStr != "" || daysChanged {
+			return time.Time{}, time.Time{}, fmt.Errorf("--all cannot be used with --days, --since, or --until")
+		}
+		return time.Time{}, time.Time{}, nil
+	}
+
+	var (
+		since time.Time
+		until time.Time
+		err   error
+	)
+	if sinceStr != "" {
+		since, err = time.Parse("2006-01-02", sinceStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid --since date: %w", err)
+		}
+	}
+	if untilStr != "" {
+		until, err = time.Parse("2006-01-02", untilStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid --until date: %w", err)
+		}
+		// Include the entire "until" day
+		until = until.Add(24*time.Hour - time.Nanosecond)
+	}
+	if sinceStr != "" || untilStr != "" {
+		if daysChanged {
+			return time.Time{}, time.Time{}, fmt.Errorf("--days cannot be used with --since or --until")
+		}
+		return since, until, nil
+	}
+
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	since = startOfToday.AddDate(0, 0, -(days - 1))
+	return since, time.Time{}, nil
+}
+
+func printDailyTable(daily []provider.DailyStats, unit tokenUnit) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "Date\tProvider\tSessions\tInput\tOutput\tCache Read\tCache Create\tTotal")
+	fmt.Fprintf(
+		w,
+		"Date\tProvider\tSessions\t%s\t%s\t%s\t%s\t%s\n",
+		tokenHeader("Input", unit),
+		tokenHeader("Output", unit),
+		tokenHeader("Cache Read", unit),
+		tokenHeader("Cache Create", unit),
+		tokenHeader("Total", unit),
+	)
 
 	var totalSessions int
 	var totalUsage provider.TokenUsage
 
 	for _, d := range daily {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n",
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
 			d.Date,
 			d.ProviderName,
 			d.Sessions,
-			d.TokenUsage.InputOther,
-			d.TokenUsage.Output,
-			d.TokenUsage.InputCacheRead,
-			d.TokenUsage.InputCacheCreate,
-			d.TokenUsage.Total(),
+			formatTokenByUnit(d.TokenUsage.InputOther, unit),
+			formatTokenByUnit(d.TokenUsage.Output, unit),
+			formatTokenByUnit(d.TokenUsage.InputCacheRead, unit),
+			formatTokenByUnit(d.TokenUsage.InputCacheCreate, unit),
+			formatTokenByUnit(d.TokenUsage.Total(), unit),
 		)
 		totalSessions += d.Sessions
 		totalUsage.InputOther += d.TokenUsage.InputOther
@@ -124,13 +242,13 @@ func printDailyTable(daily []provider.DailyStats) {
 		totalUsage.InputCacheCreate += d.TokenUsage.InputCacheCreate
 	}
 
-	fmt.Fprintf(w, "TOTAL\t\t%d\t%d\t%d\t%d\t%d\t%d\n",
+	fmt.Fprintf(w, "TOTAL\t\t%d\t%s\t%s\t%s\t%s\t%s\n",
 		totalSessions,
-		totalUsage.InputOther,
-		totalUsage.Output,
-		totalUsage.InputCacheRead,
-		totalUsage.InputCacheCreate,
-		totalUsage.Total(),
+		formatTokenByUnit(totalUsage.InputOther, unit),
+		formatTokenByUnit(totalUsage.Output, unit),
+		formatTokenByUnit(totalUsage.InputCacheRead, unit),
+		formatTokenByUnit(totalUsage.InputCacheCreate, unit),
+		formatTokenByUnit(totalUsage.Total(), unit),
 	)
 
 	w.Flush()

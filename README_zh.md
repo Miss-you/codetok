@@ -45,7 +45,7 @@ make build
 ## 快速开始
 
 ```bash
-# 按日查看 token 用量（所有 Provider）
+# 按日查看 token 用量（默认最近 7 天，单位=k）
 codetok daily
 
 # 按会话查看 token 用量
@@ -53,6 +53,18 @@ codetok session
 
 # 输出 JSON 格式
 codetok daily --json
+
+# 查看全量历史数据
+codetok daily --all
+
+# 使用自定义滚动窗口
+codetok daily --days 30
+
+# 使用原始整数（不做单位缩放）
+codetok daily --unit raw
+
+# 强制用百万单位展示
+codetok daily --unit m
 
 # 按日期范围筛选
 codetok daily --since 2026-02-01 --until 2026-02-15
@@ -62,18 +74,25 @@ codetok daily --provider claude
 codetok session --provider kimi
 ```
 
+提示：如果你改了代码后直接运行 `./bin/codetok`，请先执行 `make build` 刷新二进制。
+
 ## 使用说明
 
 ### `codetok daily`
 
 按日展示 token 用量汇总。
+默认仅展示最近 7 天。
+如需全量历史数据，使用 `--all`；如需精确时间范围，使用 `--since`/`--until`。
+表格默认按 `k` 单位展示 token 列（`--unit k`）。
+可通过 `--unit raw`/`k`/`m`/`g` 控制展示单位。
+JSON 输出始终保留原始整数 token 值。
 
 ```
-Date        Provider  Sessions  Input    Output  Cache Read  Cache Create  Total
-2026-02-07  kimi      5         109822   15356   632985      0             758163
-2026-02-08  claude    2         95046    7010    274232      0             376288
-2026-02-15  codex     21        938566   149287  7869696     0             8957549
-TOTAL                 49        2965044  369854  24638673    0             27973571
+Date        Provider  Sessions  Input(k)  Output(k)  Cache Read(k)  Cache Create(k)  Total(k)
+2026-02-07  kimi      5         109.82k  15.36k  632.98k     0.00k         758.16k
+2026-02-08  claude    2         95.05k   7.01k   274.23k     0.00k         376.29k
+2026-02-15  codex     21        938.57k  149.29k 7869.70k    0.00k         8957.55k
+TOTAL                 49        2965.04k 369.85k 24638.67k   0.00k         27973.57k
 ```
 
 参数：
@@ -81,6 +100,9 @@ TOTAL                 49        2965044  369854  24638673    0             27973
 | 参数 | 说明 |
 |------|------|
 | `--json` | 以 JSON 格式输出 |
+| `--days` | 未设置 `--since`/`--until` 时的最近天数窗口（默认：`7`） |
+| `--all` | 包含全部历史会话（不能与 `--days`、`--since`、`--until` 同时使用） |
+| `--unit` | 表格 token 展示单位：`raw`、`k`、`m`、`g`（默认：`k`） |
 | `--since` | 起始日期（格式：`2006-01-02`） |
 | `--until` | 截止日期（格式：`2006-01-02`） |
 | `--provider` | 按 Provider 筛选（如 `kimi`、`claude`、`codex`） |
@@ -88,6 +110,12 @@ TOTAL                 49        2965044  369854  24638673    0             27973
 | `--kimi-dir` | 自定义 Kimi CLI 数据目录 |
 | `--claude-dir` | 自定义 Claude Code 数据目录 |
 | `--codex-dir` | 自定义 Codex CLI 数据目录 |
+
+常用组合：
+- `codetok daily` — 最近 7 天，表格单位 `k`
+- `codetok daily --unit raw` — 最近 7 天，显示原始整数 token 值
+- `codetok daily --days 30 --unit m` — 最近 30 天，按百万单位展示
+- `codetok daily --all --unit g` — 全量历史，按十亿单位展示
 
 ### `codetok session`
 
@@ -100,7 +128,7 @@ Date        Provider  Session                               Title               
 TOTAL                                                                                  2965044   369854  27973571
 ```
 
-参数：与 `codetok daily` 相同。
+参数：`--json`、`--since`、`--until`、`--provider`、`--base-dir`、`--kimi-dir`、`--claude-dir`、`--codex-dir`。
 
 ### `codetok version`
 
@@ -109,6 +137,11 @@ TOTAL                                                                           
 ## 工作原理
 
 codetok 读取 AI 编程 CLI 工具存储在本地磁盘的会话数据。每个 Provider 有独立的解析器，理解对应工具的数据格式。所有会话文件通过有界 goroutine 并行解析（默认：`min(NumCPU, 8)`，可通过 `CODETOK_WORKERS` 环境变量配置）。
+
+统计口径：
+- token 用量通过聚合本地已有会话日志中的 token 计数字段得到。
+- codetok 不调用各 Provider 的远程 API。
+- 只有当前本地仍存在日志文件的会话才会被统计。
 
 **Kimi CLI** — `~/.kimi/sessions/<工作目录hash>/<会话UUID>/wire.jsonl`
 - 解析 `StatusUpdate` 事件中的 `token_usage` 字段
