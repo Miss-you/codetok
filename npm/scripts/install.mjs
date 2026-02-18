@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import extract from 'extract-zip';
-import tar from 'tar';
+import { x as extractTar } from 'tar';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,7 +62,7 @@ async function main() {
     await verifySHA256(checksumsPath, archivePath, archiveName);
 
     if (ext === 'tar.gz') {
-      await tar.x({
+      await extractTar({
         cwd: extractDir,
         file: archivePath,
         strict: true,

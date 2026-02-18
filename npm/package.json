@@ -1,5 +1,5 @@
 {
-  "name": "codetok",
+  "name": "@yousali/codetok",
   "version": "0.0.0-dev",
   "description": "Track and aggregate token usage across AI coding CLI tools",
   "license": "MIT",
