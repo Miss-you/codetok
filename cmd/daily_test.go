@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
 func TestResolveDailyDateRange_DefaultWindow(t *testing.T) {
@@ -15,9 +18,12 @@ func TestResolveDailyDateRange_DefaultWindow(t *testing.T) {
 		t.Fatalf("resolveDailyDateRange returned error: %v", err)
 	}
 
-	wantSince := time.Date(2026, 2, 12, 0, 0, 0, 0, now.Location())
+	wantSince := time.Date(2026, 2, 12, 0, 0, 0, 0, time.UTC)
 	if !since.Equal(wantSince) {
 		t.Fatalf("since = %v, want %v", since, wantSince)
+	}
+	if since.Location() != time.UTC {
+		t.Fatalf("since location = %v, want UTC", since.Location())
 	}
 	if !until.IsZero() {
 		t.Fatalf("until = %v, want zero time", until)
@@ -60,6 +66,13 @@ func TestResolveDailyDateRange_InvalidCombinations(t *testing.T) {
 	_, _, err = resolveDailyDateRange("2026-02-01", "", 7, false, true, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "--days cannot be used") {
 		t.Fatalf("expected --days conflict error, got: %v", err)
+	}
+}
+
+func TestResolveDailyDateRange_AllHistoryConflictPrecedence(t *testing.T) {
+	_, _, err := resolveDailyDateRange("", "", 0, true, true, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "--all cannot be used") {
+		t.Fatalf("expected --all conflict error, got: %v", err)
 	}
 }
 
@@ -125,4 +138,45 @@ func TestFormatTokenByUnit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunDaily_JSONIgnoresInvalidUnit(t *testing.T) {
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("unit", "invalid"); err != nil {
+		t.Fatalf("setting --unit: %v", err)
+	}
+	if err := cmd.Flags().Set("provider", "nonexistent"); err != nil {
+		t.Fatalf("setting --provider: %v", err)
+	}
+
+	oldStdout := os.Stdout
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("opening %s: %v", os.DevNull, err)
+	}
+	os.Stdout = devNull
+	defer func() {
+		os.Stdout = oldStdout
+		_ = devNull.Close()
+	}()
+
+	if err := runDaily(cmd, nil); err != nil {
+		t.Fatalf("runDaily returned error for json output with invalid unit: %v", err)
+	}
+}
+
+func newDailyTestCommand() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool("json", false, "")
+	cmd.Flags().String("since", "", "")
+	cmd.Flags().String("until", "", "")
+	cmd.Flags().Int("days", defaultDailyDays, "")
+	cmd.Flags().Bool("all", false, "")
+	cmd.Flags().String("unit", defaultTokenUnit, "")
+	cmd.Flags().String("provider", "", "")
+	cmd.Flags().String("base-dir", "", "")
+	return cmd
 }

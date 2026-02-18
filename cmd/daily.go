@@ -57,11 +57,6 @@ func runDaily(cmd *cobra.Command, args []string) error {
 	providerFilter, _ := cmd.Flags().GetString("provider")
 	baseDir, _ := cmd.Flags().GetString("base-dir")
 
-	unit, err := resolveTokenUnit(unitStr)
-	if err != nil {
-		return err
-	}
-
 	providers := provider.FilterProviders(provider.Registry(), providerFilter)
 
 	var allSessions []provider.SessionInfo
@@ -104,6 +99,11 @@ func runDaily(cmd *cobra.Command, args []string) error {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(daily)
+	}
+
+	unit, err := resolveTokenUnit(unitStr)
+	if err != nil {
+		return err
 	}
 
 	printDailyTable(daily, unit)
@@ -168,14 +168,14 @@ func resolveDailyDateRange(
 	allHistory, daysChanged bool,
 	now time.Time,
 ) (time.Time, time.Time, error) {
-	if days < 1 {
-		return time.Time{}, time.Time{}, fmt.Errorf("invalid --days: must be >= 1")
-	}
 	if allHistory {
 		if sinceStr != "" || untilStr != "" || daysChanged {
 			return time.Time{}, time.Time{}, fmt.Errorf("--all cannot be used with --days, --since, or --until")
 		}
 		return time.Time{}, time.Time{}, nil
+	}
+	if days < 1 {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid --days: must be >= 1")
 	}
 
 	var (
@@ -204,7 +204,8 @@ func resolveDailyDateRange(
 		return since, until, nil
 	}
 
-	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	utcNow := now.UTC()
+	startOfToday := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
 	since = startOfToday.AddDate(0, 0, -(days - 1))
 	return since, time.Time{}, nil
 }
