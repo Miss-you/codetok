@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Miss-you/codetok/provider"
+	"github.com/miss-you/codetok/provider"
 )
 
 // testdataDir returns the absolute path to the e2e testdata/sessions directory.

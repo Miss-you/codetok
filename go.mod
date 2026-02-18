@@ -1,6 +1,6 @@
-module github.com/Miss-you/codetok
+module github.com/miss-you/codetok
 
-go 1.25.0
+go 1.21.0
 
 require github.com/spf13/cobra v1.10.2
 

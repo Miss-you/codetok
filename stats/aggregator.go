@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Miss-you/codetok/provider"
+	"github.com/miss-you/codetok/provider"
 )
 
 // AggregateByDay groups sessions by date and provider, then sums their token usage.

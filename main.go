@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Miss-you/codetok/cmd"
+	"github.com/miss-you/codetok/cmd"
 )
 
 var (

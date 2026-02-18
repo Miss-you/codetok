@@ -70,7 +70,7 @@ Always run `make test` after changes to verify nothing is broken.
 2. Call `provider.Register(&Provider{})` in `init()` for auto-registration
 3. Use `provider.ParseParallel()` for concurrent file parsing
 4. Add unit tests in `provider/<name>/parser_test.go` with `testdata/` fixtures
-5. Add blank import in `cmd/daily.go` and `cmd/session.go`: `_ "github.com/Miss-you/codetok/provider/<name>"`
+5. Add blank import in `cmd/daily.go` and `cmd/session.go`: `_ "github.com/miss-you/codetok/provider/<name>"`
 6. Add `--<name>-dir` flag if the provider needs a custom data directory override
 7. Add e2e test fixtures under `e2e/testdata/` and update `isolatedArgs()` in `e2e/e2e_test.go`
 

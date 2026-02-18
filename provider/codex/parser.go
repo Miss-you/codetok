@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Miss-you/codetok/provider"
+	"github.com/miss-you/codetok/provider"
 )
 
 func init() {

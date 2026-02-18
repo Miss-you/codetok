@@ -1,8 +1,8 @@
 # codetok
 
-[![CI](https://github.com/Miss-you/codetok/actions/workflows/ci.yml/badge.svg)](https://github.com/Miss-you/codetok/actions/workflows/ci.yml)
+[![CI](https://github.com/miss-you/codetok/actions/workflows/ci.yml/badge.svg)](https://github.com/miss-you/codetok/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 
 [English](README.md)
 
@@ -24,13 +24,15 @@
 ### 从源码安装
 
 ```bash
-go install github.com/Miss-you/codetok@latest
+go install github.com/miss-you/codetok@latest
 ```
+
+注意：Go module 路径区分大小写，必须使用全小写 `github.com/miss-you/codetok`。
 
 ### 本地构建
 
 ```bash
-git clone https://github.com/Miss-you/codetok.git
+git clone https://github.com/miss-you/codetok.git
 cd codetok
 make build
 # 二进制文件在 ./bin/codetok
@@ -38,7 +40,7 @@ make build
 
 ### 下载预编译版本
 
-前往 [Releases](https://github.com/Miss-you/codetok/releases) 页面下载。
+前往 [Releases](https://github.com/miss-you/codetok/releases) 页面下载。
 
 ## 快速开始
 
@@ -175,7 +177,7 @@ make help
 ```go
 package myprovider
 
-import "github.com/Miss-you/codetok/provider"
+import "github.com/miss-you/codetok/provider"
 
 func init() {
     provider.Register(&Provider{})
@@ -193,7 +195,7 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 
 3. 在 `cmd/daily.go` 和 `cmd/session.go` 中添加空白导入：
    ```go
-   _ "github.com/Miss-you/codetok/provider/myprovider"
+   _ "github.com/miss-you/codetok/provider/myprovider"
    ```
 4. 如需要，添加 `--myprovider-dir` 参数
 
