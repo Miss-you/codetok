@@ -6,6 +6,8 @@ This file provides guidance to Claude Code when working on this project.
 
 codetok is a Go CLI tool that aggregates token usage from AI coding CLI tools (Kimi CLI, Claude Code, Codex CLI, etc.). It reads local session data files, extracts token counts, and outputs daily/session reports.
 
+Statistics are computed from existing local session logs only. codetok does not call provider APIs.
+
 ## Build & Test
 
 ```bash
@@ -18,6 +20,18 @@ make tidy           # go mod tidy + verify
 ```
 
 Always run `make test` after changes to verify nothing is broken.
+
+When validating CLI changes with `./bin/codetok`, always run `make build` first so the binary includes the latest code.
+
+## Daily Command Behavior (Current)
+
+- `codetok daily` defaults to a rolling 7-day window.
+- `codetok daily --all` includes full history.
+- `codetok daily --days N` customizes rolling window when `--since/--until` are not set.
+- `codetok daily --since YYYY-MM-DD --until YYYY-MM-DD` uses explicit date range.
+- `codetok daily --unit raw|k|m|g` controls table token unit (default `k`).
+- `--all` cannot be combined with `--days`, `--since`, or `--until`.
+- `--days` cannot be combined with `--since` or `--until`.
 
 ## Architecture
 

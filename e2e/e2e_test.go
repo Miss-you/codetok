@@ -69,7 +69,7 @@ func runCodetok(t *testing.T, binPath string, args ...string) string {
 func TestDailyCommand_JSONOutput(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
-	args := isolatedArgs(t, "daily", "--json", "--kimi-dir", baseDir)
+	args := isolatedArgs(t, "daily", "--json", "--all", "--kimi-dir", baseDir)
 	output := runCodetok(t, bin, args...)
 
 	var daily []provider.DailyStats
@@ -141,7 +141,7 @@ func TestSessionCommand_JSONOutput(t *testing.T) {
 func TestDailyCommand_TableOutput(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
-	args := isolatedArgs(t, "daily", "--kimi-dir", baseDir)
+	args := isolatedArgs(t, "daily", "--all", "--kimi-dir", baseDir)
 	output := runCodetok(t, bin, args...)
 
 	// Verify header
@@ -172,6 +172,27 @@ func TestDailyCommand_TableOutput(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	if len(lines) < 4 {
 		t.Errorf("expected at least 4 lines in table output, got %d:\n%s", len(lines), output)
+	}
+}
+
+func TestDailyCommand_TableOutput_UnitFlag(t *testing.T) {
+	bin := buildBinary(t)
+	baseDir := testdataDir(t)
+
+	outputK := runCodetok(t, bin, isolatedArgs(t, "daily", "--all", "--unit", "k", "--kimi-dir", baseDir)...)
+	if !strings.Contains(outputK, "Input(k)") {
+		t.Errorf("expected Input(k) header, got:\n%s", outputK)
+	}
+	if !strings.Contains(outputK, "3.61k") {
+		t.Errorf("expected scaled token value 3.61k, got:\n%s", outputK)
+	}
+
+	outputRaw := runCodetok(t, bin, isolatedArgs(t, "daily", "--all", "--unit", "raw", "--kimi-dir", baseDir)...)
+	if !strings.Contains(outputRaw, "Input") || strings.Contains(outputRaw, "Input(k)") {
+		t.Errorf("expected raw header without unit suffix, got:\n%s", outputRaw)
+	}
+	if !strings.Contains(outputRaw, "3610") {
+		t.Errorf("expected raw token value 3610, got:\n%s", outputRaw)
 	}
 }
 
@@ -222,7 +243,7 @@ func TestDailyCommand_ProviderFilter(t *testing.T) {
 	baseDir := testdataDir(t)
 
 	// Filter by kimi should return results
-	args := isolatedArgs(t, "daily", "--json", "--provider", "kimi", "--kimi-dir", baseDir)
+	args := isolatedArgs(t, "daily", "--json", "--all", "--provider", "kimi", "--kimi-dir", baseDir)
 	output := runCodetok(t, bin, args...)
 	var daily []provider.DailyStats
 	if err := json.Unmarshal([]byte(output), &daily); err != nil {
