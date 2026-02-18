@@ -16,9 +16,10 @@ const pkgJSONPath = path.join(pkgRoot, 'package.json');
 const vendorDir = path.join(pkgRoot, 'vendor');
 
 const project = 'codetok';
-const owner = 'Miss-you';
+const owner = 'miss-you';
 const repo = 'codetok';
 const maxRedirects = 5;
+const requestTimeoutMs = 60_000;
 
 const isWindows = process.platform === 'win32';
 const binaryName = isWindows ? 'codetok.exe' : 'codetok';
@@ -121,7 +122,7 @@ async function verifySHA256(checksumsPath, filePath, archiveName) {
 
   const actual = await sha256(filePath);
   if (actual !== expected) {
-    throw new Error(`checksum mismatch for ${archiveName}`);
+    throw new Error(`checksum mismatch for ${archiveName}: expected ${expected}, got ${actual}`);
   }
 }
 
@@ -162,6 +163,19 @@ async function downloadToFile(url, destPath, redirects = 0) {
   }
 
   return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (err) => {
+      if (done) {
+        return;
+      }
+      done = true;
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    };
+
     const req = https.get(
       url,
       {
@@ -177,24 +191,34 @@ async function downloadToFile(url, destPath, redirects = 0) {
         ) {
           const nextURL = new URL(res.headers.location, url).toString();
           res.resume();
-          downloadToFile(nextURL, destPath, redirects + 1).then(resolve).catch(reject);
+          downloadToFile(nextURL, destPath, redirects + 1).then(() => finish()).catch(finish);
           return;
         }
 
         if (res.statusCode !== 200) {
           res.resume();
-          reject(new Error(`download failed (${res.statusCode}) for ${url}`));
+          finish(new Error(`download failed (${res.statusCode}) for ${url}`));
           return;
         }
 
         const ws = fs.createWriteStream(destPath);
-        ws.on('error', reject);
-        ws.on('finish', () => resolve());
+        ws.on('error', (err) => {
+          res.destroy();
+          finish(err);
+        });
+        ws.on('finish', () => finish());
+        res.on('error', (err) => {
+          ws.destroy();
+          finish(err);
+        });
         res.pipe(ws);
       }
     );
 
-    req.on('error', reject);
+    req.setTimeout(requestTimeoutMs, () => {
+      req.destroy(new Error(`download timeout after ${requestTimeoutMs}ms for ${url}`));
+    });
+    req.on('error', finish);
   });
 }
 
