@@ -37,8 +37,8 @@ jobs:
           name: coverage
           path: coverage.out
 
-  build:
-    name: Build
+  build_matrix:
+    name: Build Matrix (${{ matrix.goos }}, ${{ matrix.goarch }})
     needs: [lint, test]
     runs-on: ubuntu-latest
     strategy:
@@ -61,3 +61,17 @@ jobs:
         with:
           name: codetok-${{ matrix.goos }}-${{ matrix.goarch }}
           path: bin/codetok-${{ matrix.goos }}-${{ matrix.goarch }}
+
+  build:
+    name: Build
+    needs: [build_matrix]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check matrix build result
+        run: |
+          if [ "${{ needs.build_matrix.result }}" != "success" ]; then
+            echo "Matrix build failed."
+            exit 1
+          fi
+          echo "All matrix builds passed."

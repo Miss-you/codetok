@@ -8,7 +8,9 @@ const binName = process.platform === 'win32' ? 'codetok.exe' : 'codetok';
 const binPath = path.join(__dirname, '..', 'vendor', binName);
 
 if (!fs.existsSync(binPath)) {
-  console.error('[codetok] native binary is missing. Reinstall with `npm install -g codetok`.');
+  console.error(
+    '[codetok] native binary is missing. Reinstall with `npm install -g @yousali/codetok`.'
+  );
   process.exit(1);
 }
 

@@ -24,7 +24,7 @@ Planned:
 ### From npm
 
 ```bash
-npm install -g codetok
+npm install -g @yousali/codetok
 ```
 
 ### From source

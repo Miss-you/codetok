@@ -24,7 +24,7 @@
 ### 从 npm 安装
 
 ```bash
-npm install -g codetok
+npm install -g @yousali/codetok
 ```
 
 ### 从源码安装
