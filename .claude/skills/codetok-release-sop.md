@@ -1,15 +1,15 @@
 # codetok Release SOP (for Claude)
 
 ## Scope
-- Repository: `Miss-you/codetok`
+- Repository: `miss-you/codetok`
 - Workflow: `.github/workflows/release.yml`
 - npm package: `@yousali/codetok`
 - Release source branch: `main`
 
 ## 1. Confirm merged commit on `main`
 ```bash
-gh pr view <PR_NUMBER> --repo Miss-you/codetok --json state,mergedAt,baseRefName,headRefName,url
-gh api repos/Miss-you/codetok/commits/main --jq '.sha[0:7] + " " + .commit.message'
+gh pr view <PR_NUMBER> --repo miss-you/codetok --json state,mergedAt,baseRefName,headRefName,url
+gh api repos/miss-you/codetok/commits/main --jq '.sha[0:7] + " " + .commit.message'
 ```
 Pass criteria:
 - PR is merged
@@ -43,8 +43,8 @@ git push origin vX.Y.Z
 
 ## 4. Monitor release workflow
 ```bash
-gh run list --repo Miss-you/codetok --workflow release.yml --limit 3
-gh run watch <RUN_ID> --repo Miss-you/codetok --exit-status
+gh run list --repo miss-you/codetok --workflow release.yml --limit 3
+gh run watch <RUN_ID> --repo miss-you/codetok --exit-status
 ```
 Expected jobs:
 - `Release`
@@ -52,16 +52,16 @@ Expected jobs:
 
 ## 5. Verify GitHub release artifacts
 ```bash
-gh release view vX.Y.Z --repo Miss-you/codetok --json tagName,isDraft,isPrerelease,assets
+gh release view vX.Y.Z --repo miss-you/codetok --json tagName,isDraft,isPrerelease,assets
 ```
 Must include:
 - `checksums.txt`
-- `codetok_<version>_darwin_amd64.tar.gz`
-- `codetok_<version>_darwin_arm64.tar.gz`
-- `codetok_<version>_linux_amd64.tar.gz`
-- `codetok_<version>_linux_arm64.tar.gz`
-- `codetok_<version>_windows_amd64.zip`
-- `codetok_<version>_windows_arm64.zip`
+- `codetok_X.Y.Z_darwin_amd64.tar.gz` (`X.Y.Z` has no leading `v`)
+- `codetok_X.Y.Z_darwin_arm64.tar.gz` (`X.Y.Z` has no leading `v`)
+- `codetok_X.Y.Z_linux_amd64.tar.gz` (`X.Y.Z` has no leading `v`)
+- `codetok_X.Y.Z_linux_arm64.tar.gz` (`X.Y.Z` has no leading `v`)
+- `codetok_X.Y.Z_windows_amd64.zip` (`X.Y.Z` has no leading `v`)
+- `codetok_X.Y.Z_windows_arm64.zip` (`X.Y.Z` has no leading `v`)
 
 ## 6. Verify npm publish and install
 ```bash
@@ -79,7 +79,7 @@ Pass criteria:
 ### `E403` on npm publish
 - Check `NPM_TOKEN` exists in repo secrets:
 ```bash
-gh secret list --repo Miss-you/codetok
+gh secret list --repo miss-you/codetok
 ```
 - Verify package namespace is `@yousali/codetok`
 - Rotate token and rerun failed jobs if needed
@@ -87,7 +87,7 @@ gh secret list --repo Miss-you/codetok
 ### Release succeeded but npm not visible
 - Inspect workflow logs:
 ```bash
-gh run view <RUN_ID> --repo Miss-you/codetok --log
+gh run view <RUN_ID> --repo miss-you/codetok --log
 ```
 - Wait short time for npm propagation and recheck
 
@@ -97,8 +97,8 @@ gh run view <RUN_ID> --repo Miss-you/codetok --log
 
 ## 8. Rerun a failed release run
 ```bash
-gh run rerun <RUN_ID> --repo Miss-you/codetok --failed
-gh run watch <RUN_ID> --repo Miss-you/codetok --exit-status
+gh run rerun <RUN_ID> --repo miss-you/codetok --failed
+gh run watch <RUN_ID> --repo miss-you/codetok --exit-status
 ```
 
 ## 9. Post-release record

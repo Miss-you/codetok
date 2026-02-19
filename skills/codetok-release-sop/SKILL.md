@@ -14,8 +14,8 @@ description: Cut and verify codetok releases from merged main commits through Gi
 
 ## 1) Confirm Ready-to-Release Commit
 ```bash
-gh pr view <PR_NUMBER> --repo Miss-you/codetok --json state,mergedAt,baseRefName,headRefName,url
-gh api repos/Miss-you/codetok/commits/main --jq '.sha[0:7] + " " + .commit.message'
+gh pr view <PR_NUMBER> --repo miss-you/codetok --json state,mergedAt,baseRefName,headRefName,url
+gh api repos/miss-you/codetok/commits/main --jq '.sha[0:7] + " " + .commit.message'
 ```
 - Require `state=MERGED` and target branch `main`.
 - Use current `origin/main` commit as release source.
@@ -47,8 +47,8 @@ git push origin vX.Y.Z
 
 ## 4) Monitor Release Workflow
 ```bash
-gh run list --repo Miss-you/codetok --workflow release.yml --limit 3
-gh run watch <RUN_ID> --repo Miss-you/codetok --exit-status
+gh run list --repo miss-you/codetok --workflow release.yml --limit 3
+gh run watch <RUN_ID> --repo miss-you/codetok --exit-status
 ```
 Expect both jobs to succeed:
 - `Release`
@@ -56,19 +56,19 @@ Expect both jobs to succeed:
 
 ## 5) Verify GitHub Release Artifacts
 ```bash
-gh release view vX.Y.Z --repo Miss-you/codetok --json tagName,isDraft,isPrerelease,assets
+gh release view vX.Y.Z --repo miss-you/codetok --json tagName,isDraft,isPrerelease,assets
 ```
 Require:
 - `isDraft=false`
 - `isPrerelease=false`
-- assets include:
+- assets include (using `X.Y.Z` without leading `v` in filenames):
   - `checksums.txt`
-  - `codetok_<version>_darwin_amd64.tar.gz`
-  - `codetok_<version>_darwin_arm64.tar.gz`
-  - `codetok_<version>_linux_amd64.tar.gz`
-  - `codetok_<version>_linux_arm64.tar.gz`
-  - `codetok_<version>_windows_amd64.zip`
-  - `codetok_<version>_windows_arm64.zip`
+  - `codetok_X.Y.Z_darwin_amd64.tar.gz`
+  - `codetok_X.Y.Z_darwin_arm64.tar.gz`
+  - `codetok_X.Y.Z_linux_amd64.tar.gz`
+  - `codetok_X.Y.Z_linux_arm64.tar.gz`
+  - `codetok_X.Y.Z_windows_amd64.zip`
+  - `codetok_X.Y.Z_windows_arm64.zip`
 
 ## 6) Verify npm Publish and Install
 ```bash
@@ -88,7 +88,7 @@ Require:
 - Cause: token lacks publish permission or wrong package namespace.
 - Check repo secret presence:
 ```bash
-gh secret list --repo Miss-you/codetok
+gh secret list --repo miss-you/codetok
 ```
 - Confirm workflow publishes scoped package `@yousali/codetok`.
 - Rotate `NPM_TOKEN` and rerun failed jobs.
@@ -96,7 +96,7 @@ gh secret list --repo Miss-you/codetok
 ### Release job succeeds but npm package seems unavailable
 - Inspect logs:
 ```bash
-gh run view <RUN_ID> --repo Miss-you/codetok --log
+gh run view <RUN_ID> --repo miss-you/codetok --log
 ```
 - Confirm `Publish npm` completed successfully.
 - Recheck npm after a short propagation delay.
@@ -107,8 +107,8 @@ gh run view <RUN_ID> --repo Miss-you/codetok --log
 
 ## 8) Rerun Failed Release Attempt
 ```bash
-gh run rerun <RUN_ID> --repo Miss-you/codetok --failed
-gh run watch <RUN_ID> --repo Miss-you/codetok --exit-status
+gh run rerun <RUN_ID> --repo miss-you/codetok --failed
+gh run watch <RUN_ID> --repo miss-you/codetok --exit-status
 ```
 Use rerun when tag/version is correct and only credentials or transient failures were fixed.
 
