@@ -66,7 +66,7 @@ func runCodetok(t *testing.T, binPath string, args ...string) string {
 	return stdout.String()
 }
 
-func TestDailyCommand_JSONOutput_DefaultGroupByCLI(t *testing.T) {
+func TestDailyCommand_JSONOutput_DefaultGroupByModel(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
 	args := isolatedArgs(t, "daily", "--json", "--all", "--kimi-dir", baseDir)
@@ -81,17 +81,17 @@ func TestDailyCommand_JSONOutput_DefaultGroupByCLI(t *testing.T) {
 		t.Fatalf("expected 2 daily entries, got %d: %s", len(daily), output)
 	}
 
-	// Default grouping is by cli.
+	// Default grouping is by model.
 	totalSessions := 0
 	totalTokens := 0
 	for _, d := range daily {
 		totalSessions += d.Sessions
 		totalTokens += d.TokenUsage.Total()
-		if d.GroupBy != "cli" {
-			t.Errorf("expected group_by %q, got %q", "cli", d.GroupBy)
+		if d.GroupBy != "model" {
+			t.Errorf("expected group_by %q, got %q", "model", d.GroupBy)
 		}
-		if d.Group != "kimi" {
-			t.Errorf("expected cli group %q, got %q", "kimi", d.Group)
+		if d.Group != "unknown (kimi)" {
+			t.Errorf("expected model group %q, got %q", "unknown (kimi)", d.Group)
 		}
 	}
 
@@ -178,7 +178,7 @@ func TestSessionCommand_JSONOutput(t *testing.T) {
 	}
 }
 
-func TestDailyCommand_DashboardOutput_DefaultCLI(t *testing.T) {
+func TestDailyCommand_DashboardOutput_DefaultModel(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
 	args := isolatedArgs(t, "daily", "--all", "--kimi-dir", baseDir)
@@ -188,11 +188,11 @@ func TestDailyCommand_DashboardOutput_DefaultCLI(t *testing.T) {
 	if !strings.Contains(output, "Daily Total Trend") {
 		t.Error("dashboard output missing trend section header")
 	}
-	if !strings.Contains(output, "CLI Total Ranking") {
-		t.Error("dashboard output missing CLI ranking section header")
+	if !strings.Contains(output, "Model Total Ranking") {
+		t.Error("dashboard output missing Model ranking section header")
 	}
-	if !strings.Contains(output, "Top 5 CLI Share") {
-		t.Error("dashboard output missing CLI top share section header")
+	if !strings.Contains(output, "Top 5 Model Share") {
+		t.Error("dashboard output missing Model top share section header")
 	}
 	if !strings.Contains(output, "Coverage:") {
 		t.Error("dashboard output missing coverage line")
@@ -201,9 +201,9 @@ func TestDailyCommand_DashboardOutput_DefaultCLI(t *testing.T) {
 		t.Error("dashboard output missing bar row")
 	}
 
-	// Default group-by=cli should show provider group for testdata.
-	if !strings.Contains(output, "kimi") {
-		t.Error("dashboard output missing default cli group 'kimi'")
+	// Default group-by=model should show provider-scoped unknown model for testdata.
+	if !strings.Contains(output, "unknown (kimi)") {
+		t.Error("dashboard output missing default model group 'unknown (kimi)'")
 	}
 }
 
@@ -230,10 +230,10 @@ func TestDailyCommand_DashboardOutput_TopFlag(t *testing.T) {
 	args := isolatedArgs(t, "daily", "--all", "--top", "1", "--kimi-dir", baseDir)
 	output := runCodetok(t, bin, args...)
 
-	if !strings.Contains(output, "Top 1 CLI Share") {
+	if !strings.Contains(output, "Top 1 Model Share") {
 		t.Error("dashboard output missing custom top share section header")
 	}
-	if strings.Contains(output, "Top 5 CLI Share") {
+	if strings.Contains(output, "Top 5 Model Share") {
 		t.Error("dashboard output should not show default top value when --top is set")
 	}
 }

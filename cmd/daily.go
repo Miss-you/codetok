@@ -28,7 +28,7 @@ var dailyCmd = &cobra.Command{
 
 const defaultDailyDays = 7
 const defaultTokenUnit = "m"
-const defaultGroupBy = "cli"
+const defaultGroupBy = "model"
 const defaultTopN = 5
 
 func init() {
@@ -129,7 +129,7 @@ func runDaily(cmd *cobra.Command, args []string) error {
 func resolveGroupBy(groupBy string) (stats.AggregateDimension, error) {
 	switch strings.ToLower(strings.TrimSpace(groupBy)) {
 	case "":
-		return stats.AggregateDimensionCLI, nil
+		return stats.AggregateDimensionModel, nil
 	case "model":
 		return stats.AggregateDimensionModel, nil
 	case "cli":
