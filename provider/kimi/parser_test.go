@@ -302,6 +302,68 @@ func TestNormalizeKimiModelName(t *testing.T) {
 	}
 }
 
+func TestModelNameFromLogLine_Variants(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "single quote fields",
+			line: "2026-02-20T10:00:01Z INFO Using LLM model: provider='moonshot' model='K2.5'",
+			want: "K2.5",
+		},
+		{
+			name: "double quote fields with spacing",
+			line: "2026-02-20T10:00:01Z INFO Using LLM model : provider = \"moonshot\"   model_name = \"kimi-k2-thinking\"",
+			want: "kimi-k2-thinking",
+		},
+		{
+			name: "upper case marker",
+			line: "2026-02-20T10:00:01Z INFO USING LLM MODEL: provider='moonshot' model_id='k2.5'",
+			want: "k2.5",
+		},
+		{
+			name: "non marker line",
+			line: "2026-02-20T10:00:01Z INFO model='k2.5'",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := modelNameFromLogLine(tt.line)
+			if got != tt.want {
+				t.Fatalf("modelNameFromLogLine(%q) = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeSessionModelsFromLog_UsesLatestModelForSession(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kimi-main.log")
+	sessionID := "11111111-2222-3333-4444-555555555555"
+	content := `2026-02-20T10:00:00Z INFO Created new session: ` + sessionID + `
+2026-02-20T10:00:01Z INFO Using LLM model: provider='moonshot' model='K2.5'
+2026-02-20T10:00:02Z INFO Using LLM model: provider='moonshot' model='k2-thinking'
+`
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionModelIndex := make(map[string]string)
+	mergeSessionModelsFromLog(logPath, sessionModelIndex)
+
+	got, exists := sessionModelIndex[normalizeSessionIDForLookup(sessionID)]
+	if !exists {
+		t.Fatalf("missing sessionID mapping for %q", sessionID)
+	}
+	if got != "kimi-k2-thinking" {
+		t.Fatalf("model mapping = %q, want %q", got, "kimi-k2-thinking")
+	}
+}
+
 func TestCollectSessions_ModelFallbackFromLogs(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)

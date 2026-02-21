@@ -22,7 +22,7 @@ type Provider struct{}
 
 var (
 	createdSessionLogPattern = regexp.MustCompile(`Created new session:\s*([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})`)
-	modelLogPattern          = regexp.MustCompile(`model=['"]([^'"]+)['"]`)
+	modelLogFieldPattern     = regexp.MustCompile(`([a-zA-Z0-9_]+)\s*=\s*('[^']*'|"[^"]*"|[^,\s]+)`)
 )
 
 // Name returns the provider name.
@@ -355,7 +355,7 @@ func mergeSessionModelsFromLog(logPath string, sessionModelIndex map[string]stri
 			currentSessionID = sessionID
 			continue
 		}
-		if currentSessionID == "" || !strings.Contains(line, "Using LLM model:") {
+		if currentSessionID == "" {
 			continue
 		}
 
@@ -364,9 +364,8 @@ func mergeSessionModelsFromLog(logPath string, sessionModelIndex map[string]stri
 			continue
 		}
 
-		if _, exists := sessionModelIndex[currentSessionID]; !exists {
-			sessionModelIndex[currentSessionID] = normalizeKimiModelName(modelName)
-		}
+		// Keep the latest model entry seen for this session.
+		sessionModelIndex[currentSessionID] = normalizeKimiModelName(modelName)
 	}
 }
 
@@ -382,11 +381,42 @@ func createdSessionIDFromLogLine(line string) string {
 }
 
 func modelNameFromLogLine(line string) string {
-	matches := modelLogPattern.FindStringSubmatch(line)
-	if len(matches) < 2 {
+	lowerLine := strings.ToLower(line)
+	markerIdx := strings.Index(lowerLine, "using llm model")
+	if markerIdx < 0 {
 		return ""
 	}
-	return strings.TrimSpace(matches[1])
+
+	fieldsPart := line[markerIdx:]
+	fields := parseModelFieldsFromLogLine(fieldsPart)
+	for _, key := range []string{"model", "model_name", "model_id", "modelid"} {
+		if value, ok := fields[key]; ok {
+			return value
+		}
+	}
+	return ""
+}
+
+func parseModelFieldsFromLogLine(line string) map[string]string {
+	matches := modelLogFieldPattern.FindAllStringSubmatch(line, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	fields := make(map[string]string, len(matches))
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(match[1]))
+		value := strings.TrimSpace(match[2])
+		value = strings.Trim(value, "'\"")
+		if key == "" || value == "" {
+			continue
+		}
+		fields[key] = value
+	}
+	return fields
 }
 
 func modelNameFromLogFallback(sessionID, sessionPath string, sessionModelIndex map[string]string) string {
