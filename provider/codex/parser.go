@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ type sessionMetaPayload struct {
 // eventMsgPayload holds the event_msg payload envelope.
 type eventMsgPayload struct {
 	Type    string          `json:"type"`
+	Model   string          `json:"model"`
 	Message string          `json:"message"`
 	Info    json.RawMessage `json:"info"`
 }
@@ -182,11 +184,23 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 					startTime = ts
 				}
 			}
+			if info.ModelName == "" {
+				info.ModelName = extractModelFromRawJSON(event.Payload)
+			}
 
 		case "event_msg":
 			var msg eventMsgPayload
 			if err := json.Unmarshal(event.Payload, &msg); err != nil {
 				continue
+			}
+			if info.ModelName == "" {
+				info.ModelName = strings.TrimSpace(msg.Model)
+				if info.ModelName == "" {
+					info.ModelName = extractModelFromRawJSON(msg.Info)
+				}
+				if info.ModelName == "" {
+					info.ModelName = extractModelFromRawJSON(event.Payload)
+				}
 			}
 
 			switch msg.Type {
@@ -214,6 +228,11 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 				}
 				lastTokenUsage = &usage
 			}
+
+		default:
+			if info.ModelName == "" {
+				info.ModelName = extractModelFromRawJSON(event.Payload)
+			}
 		}
 	}
 
@@ -229,4 +248,59 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 	info.EndTime = endTime
 
 	return info, nil
+}
+
+func extractModelFromRawJSON(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return ""
+	}
+	return extractModelFromAny(v)
+}
+
+func extractModelFromAny(v any) string {
+	switch x := v.(type) {
+	case map[string]any:
+		// Prefer common model key names first.
+		for _, key := range []string{
+			"model",
+			"model_name",
+			"modelName",
+			"model_id",
+			"modelId",
+			"selected_model",
+			"default_model",
+			"limit_name",
+		} {
+			if s, ok := x[key].(string); ok {
+				s = strings.TrimSpace(s)
+				if s != "" {
+					return s
+				}
+			}
+		}
+
+		// Then recurse into nested fields.
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if model := extractModelFromAny(x[k]); model != "" {
+				return model
+			}
+		}
+	case []any:
+		for _, item := range x {
+			if model := extractModelFromAny(item); model != "" {
+				return model
+			}
+		}
+	}
+	return ""
 }

@@ -119,6 +119,67 @@ func TestParseCodexSession_NoTokenCount(t *testing.T) {
 	if info.Turns != 1 {
 		t.Errorf("Turns = %d, want 1", info.Turns)
 	}
+	if info.ModelName != "" {
+		t.Errorf("ModelName = %q, want empty", info.ModelName)
+	}
+}
+
+func TestParseCodexSession_ModelExtraction(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"timestamp":"2026-02-15T10:00:00.000Z","type":"session_meta","payload":{"id":"model-test","timestamp":"2026-02-15T10:00:00.000Z","cwd":"/test"}}
+{"timestamp":"2026-02-15T10:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"Hello"}}
+{"timestamp":"2026-02-15T10:01:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"model_name":"gpt-5-codex","total_token_usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":100,"total_tokens":600}}}}
+`
+	filePath := filepath.Join(dir, "rollout-model.jsonl")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := parseCodexSession(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.ModelName != "gpt-5-codex" {
+		t.Errorf("ModelName = %q, want %q", info.ModelName, "gpt-5-codex")
+	}
+}
+
+func TestParseCodexSession_ModelExtractionFromNonEventMsgPayload(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"timestamp":"2026-02-15T10:00:00.000Z","type":"session_meta","payload":{"id":"turn-context-model","timestamp":"2026-02-15T10:00:00.000Z","cwd":"/test"}}
+{"timestamp":"2026-02-15T10:00:01.000Z","type":"turn_context","payload":{"context":{"model_name":"gpt-5-codex"}}}
+`
+	filePath := filepath.Join(dir, "rollout-turn-context-model.jsonl")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := parseCodexSession(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.ModelName != "gpt-5-codex" {
+		t.Errorf("ModelName = %q, want %q", info.ModelName, "gpt-5-codex")
+	}
+}
+
+func TestParseCodexSession_ModelExtractionMalformedInfo(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"timestamp":"2026-02-15T10:00:00.000Z","type":"session_meta","payload":{"id":"model-malformed","timestamp":"2026-02-15T10:00:00.000Z","cwd":"/test"}}
+{"timestamp":"2026-02-15T10:01:00.000Z","type":"event_msg","payload":{"type":"token_count","info":"not-an-object"}}
+`
+	filePath := filepath.Join(dir, "rollout-model-malformed.jsonl")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := parseCodexSession(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.ModelName != "" {
+		t.Errorf("ModelName = %q, want empty", info.ModelName)
+	}
 }
 
 func TestParseCodexSession_MultipleTokenCounts(t *testing.T) {
