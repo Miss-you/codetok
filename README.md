@@ -56,7 +56,7 @@ Release automation:
 ## Quick Start
 
 ```bash
-# Show daily token usage dashboard (last 7 days, group-by=cli/provider, unit=m by default)
+# Show daily token usage dashboard (last 7 days, group-by=model, unit=m by default)
 codetok daily
 
 # Show per-session token usage
@@ -98,8 +98,8 @@ Tip: if you changed code and run `./bin/codetok`, run `make build` first to refr
 ### `codetok daily`
 
 Show daily token usage dashboard.
-By default, it shows the last 7 days, grouped by CLI/provider (`--group-by cli`).
-Use `--group-by model` to switch to model aggregation.
+By default, it shows the last 7 days, grouped by model (`--group-by model`).
+Use `--group-by cli` to switch to CLI/provider aggregation.
 Use `--all` for full history, or use `--since`/`--until` for an explicit date range.
 Dashboard output displays token columns in `m` by default (`--unit m`).
 Use `--unit raw`/`k`/`m`/`g` to control display scale.
@@ -132,7 +132,7 @@ Flags:
 | `--days` | Lookback window in days when `--since`/`--until` are not set (default: `7`) |
 | `--all` | Include all historical sessions (cannot be used with `--days`, `--since`, `--until`) |
 | `--unit` | Token display unit for dashboard output: `raw`, `k`, `m`, `g` (default: `m`) |
-| `--group-by` | Aggregation dimension for `daily`: `cli` (default, provider/CLI view) or `model` (explicit opt-in) |
+| `--group-by` | Aggregation dimension for `daily`: `model` (default) or `cli` (provider/CLI view) |
 | `--top` | Number of groups shown in the share section for the current grouping dimension (default: `5`) |
 | `--since` | Start date filter (format: `2006-01-02`) |
 | `--until` | End date filter (format: `2006-01-02`) |
@@ -143,11 +143,11 @@ Flags:
 | `--codex-dir` | Override Codex CLI data directory |
 
 Common combinations:
-- `codetok daily` — last 7 days, dashboard grouped by CLI/provider, unit `m`
+- `codetok daily` — last 7 days, dashboard grouped by model, unit `m`
 - `codetok daily --unit raw` — last 7 days, raw integer token counts
 - `codetok daily --days 30 --unit m` — last 30 days, displayed in millions
 - `codetok daily --all --unit g` — full history, displayed in billions
-- `codetok daily --group-by model` — switch to model aggregation (explicit opt-in)
+- `codetok daily --group-by cli` — switch to CLI/provider aggregation
 - `codetok daily --top 10` — show Top 10 groups in share section
 
 ### `codetok session`

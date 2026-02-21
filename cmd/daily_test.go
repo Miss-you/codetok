@@ -132,7 +132,7 @@ func TestResolveGroupBy(t *testing.T) {
 		{input: "model", want: stats.AggregateDimensionModel},
 		{input: "MODEL", want: stats.AggregateDimensionModel},
 		{input: "cli", want: stats.AggregateDimensionCLI},
-		{input: "", want: stats.AggregateDimensionCLI},
+		{input: "", want: stats.AggregateDimensionModel},
 	}
 
 	for _, tt := range tests {

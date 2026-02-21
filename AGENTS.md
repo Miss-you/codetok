@@ -28,8 +28,8 @@ Important:
 ## Daily Command Contract
 
 - Default: `codetok daily` shows the latest 7-day rolling window.
-- Default grouping: `codetok daily` aggregates by CLI/provider (`--group-by cli`).
-- Model view (explicit opt-in): `codetok daily --group-by model`.
+- Default grouping: `codetok daily` aggregates by model (`--group-by model`).
+- CLI/provider view (explicit opt-in): `codetok daily --group-by cli`.
 - Default terminal output layout:
   - `Daily Total Trend` (date-axis trend of total usage)
   - `Model/CLI Total Ranking` (period total ranking by current group)
