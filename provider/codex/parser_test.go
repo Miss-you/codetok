@@ -220,6 +220,25 @@ func TestParseCodexSession_ModelExtractionRejectsPlaceholder(t *testing.T) {
 	}
 }
 
+func TestParseCodexSession_ModelExtractionSkipsPlaceholderMsgModel(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"timestamp":"2026-02-15T10:00:00.000Z","type":"session_meta","payload":{"id":"model-placeholder-msg","timestamp":"2026-02-15T10:00:00.000Z","cwd":"/test"}}
+{"timestamp":"2026-02-15T10:01:00.000Z","type":"event_msg","payload":{"type":"token_count","model":"default","info":{"context":{"model_name":"gpt-5-codex"},"total_token_usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":100,"total_tokens":600}}}}
+`
+	filePath := filepath.Join(dir, "rollout-model-placeholder-msg.jsonl")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := parseCodexSession(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.ModelName != "gpt-5-codex" {
+		t.Errorf("ModelName = %q, want %q", info.ModelName, "gpt-5-codex")
+	}
+}
+
 func TestParseCodexSession_MultipleTokenCounts(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"timestamp":"2026-02-15T10:00:00.000Z","type":"session_meta","payload":{"id":"multi-tc","timestamp":"2026-02-15T10:00:00.000Z","cwd":"/test","cli_version":"0.47.0"}}

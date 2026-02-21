@@ -218,7 +218,10 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 				continue
 			}
 			if info.ModelName == "" {
-				info.ModelName = strings.TrimSpace(msg.Model)
+				candidate := strings.TrimSpace(msg.Model)
+				if isLikelyCodexModelName(candidate) {
+					info.ModelName = candidate
+				}
 				if info.ModelName == "" {
 					info.ModelName = extractModelFromRawJSON(msg.Info)
 				}
