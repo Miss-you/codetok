@@ -1,0 +1,4 @@
+interface:
+  display_name: "codetok Release SOP"
+  short_description: "Run codetok tag-to-release-and-npm workflow"
+  default_prompt: "Use $codetok-release-sop to prepare, tag, and verify a codetok release and npm publish."
