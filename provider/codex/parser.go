@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -44,6 +43,31 @@ type eventMsgPayload struct {
 	Model   string          `json:"model"`
 	Message string          `json:"message"`
 	Info    json.RawMessage `json:"info"`
+}
+
+var codexModelPaths = [][]string{
+	{"model"},
+	{"model_name"},
+	{"modelName"},
+	{"model_id"},
+	{"modelId"},
+	{"selected_model"},
+	{"default_model"},
+	{"context", "model"},
+	{"context", "model_name"},
+	{"context", "modelName"},
+	{"context", "model_id"},
+	{"context", "modelId"},
+	{"info", "model"},
+	{"info", "model_name"},
+	{"info", "modelName"},
+	{"info", "model_id"},
+	{"info", "modelId"},
+	{"payload", "model"},
+	{"payload", "model_name"},
+	{"payload", "modelName"},
+	{"payload", "model_id"},
+	{"payload", "modelId"},
 }
 
 // tokenCountInfo holds the token_count info field.
@@ -259,48 +283,47 @@ func extractModelFromRawJSON(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return ""
 	}
-	return extractModelFromAny(v)
-}
-
-func extractModelFromAny(v any) string {
-	switch x := v.(type) {
-	case map[string]any:
-		// Prefer common model key names first.
-		for _, key := range []string{
-			"model",
-			"model_name",
-			"modelName",
-			"model_id",
-			"modelId",
-			"selected_model",
-			"default_model",
-			"limit_name",
-		} {
-			if s, ok := x[key].(string); ok {
-				s = strings.TrimSpace(s)
-				if s != "" {
-					return s
-				}
-			}
-		}
-
-		// Then recurse into nested fields.
-		keys := make([]string, 0, len(x))
-		for k := range x {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			if model := extractModelFromAny(x[k]); model != "" {
-				return model
-			}
-		}
-	case []any:
-		for _, item := range x {
-			if model := extractModelFromAny(item); model != "" {
-				return model
-			}
+	for _, path := range codexModelPaths {
+		if model := extractStringByPath(v, path); isLikelyCodexModelName(model) {
+			return model
 		}
 	}
 	return ""
+}
+
+func extractStringByPath(root any, path []string) string {
+	current := root
+	for _, segment := range path {
+		node, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		next, ok := node[segment]
+		if !ok {
+			return ""
+		}
+		current = next
+	}
+
+	value, ok := current.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func isLikelyCodexModelName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	lowerName := strings.ToLower(name)
+	switch lowerName {
+	case "auto", "default", "none", "null", "n/a", "unknown":
+		return false
+	}
+	if strings.Contains(lowerName, "rate limit") || strings.Contains(lowerName, "rate-limit") {
+		return false
+	}
+	return true
 }
