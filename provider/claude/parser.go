@@ -37,6 +37,7 @@ type claudeEvent struct {
 // claudeMsg represents the message field in a Claude Code event.
 type claudeMsg struct {
 	ID      string          `json:"id"`
+	Model   string          `json:"model"`
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
 	Usage   *claudeUsage    `json:"usage"`
@@ -174,6 +175,11 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 		case "assistant":
 			if info.SessionID == "" {
 				info.SessionID = event.SessionID
+			}
+			if info.ModelName == "" {
+				if model := strings.TrimSpace(event.Message.Model); model != "" {
+					info.ModelName = model
+				}
 			}
 			if event.Message.Usage != nil {
 				key := dedupKey(event.Message.ID, event.RequestID, &uniqueCounter)

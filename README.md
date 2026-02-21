@@ -56,7 +56,7 @@ Release automation:
 ## Quick Start
 
 ```bash
-# Show daily token usage breakdown (last 7 days, unit=k by default)
+# Show daily token usage dashboard (last 7 days, group-by=cli/provider, unit=m by default)
 codetok daily
 
 # Show per-session token usage
@@ -83,6 +83,12 @@ codetok daily --since 2026-02-01 --until 2026-02-15
 # Filter by provider
 codetok daily --provider claude
 codetok session --provider kimi
+
+# Switch aggregation to model view (explicit opt-in)
+codetok daily --group-by model
+
+# Show Top 10 groups in the share section
+codetok daily --top 10
 ```
 
 Tip: if you changed code and run `./bin/codetok`, run `make build` first to refresh the binary.
@@ -91,19 +97,31 @@ Tip: if you changed code and run `./bin/codetok`, run `make build` first to refr
 
 ### `codetok daily`
 
-Show daily token usage breakdown.
-By default, it shows the last 7 days.
+Show daily token usage dashboard.
+By default, it shows the last 7 days, grouped by CLI/provider (`--group-by cli`).
+Use `--group-by model` to switch to model aggregation.
 Use `--all` for full history, or use `--since`/`--until` for an explicit date range.
-Table output displays token columns in `k` by default (`--unit k`).
+Dashboard output displays token columns in `m` by default (`--unit m`).
 Use `--unit raw`/`k`/`m`/`g` to control display scale.
 JSON output always keeps raw integer token counts.
+In JSON output, `provider` always keeps provider meaning; grouped dimension and value are described by `group_by` + `group`.
+Use `--top N` to control how many groups appear in the share section for the current grouping dimension.
 
 ```
-Date        Provider  Sessions  Input(k)  Output(k)  Cache Read(k)  Cache Create(k)  Total(k)
-2026-02-07  kimi      5         109.82k  15.36k  632.98k     0.00k         758.16k
-2026-02-08  claude    2         95.05k   7.01k   274.23k     0.00k         376.29k
-2026-02-15  codex     21        938.57k  149.29k 7869.70k    0.00k         8957.55k
-TOTAL                 49        2965.04k 369.85k 24638.67k   0.00k         27973.57k
+Daily Total Trend
+Date   02-15   02-16   02-17   ...
+Total  20.32m  8.47m   66.43m  ...
+Bar    ###...  #.....  ######  ...
+
+Model/CLI Total Ranking
+Rank  Model/CLI        Sessions  Total(m)
+1     claude-opus-4-6  23        102.12m
+2     gpt-5.3-codex    31        100.83m
+3     kimi-for-coding  41        26.78m
+
+Top 5 Model/CLI Share
+Rank  Model/CLI        Share   Sessions  Total(m)  Input(m)  Output(m)  Cache Read(m)  Cache Create(m)
+1     claude-opus-4-6  43.81%  23        102.12m   0.02m     0.50m      98.21m         3.39m
 ```
 
 Flags:
@@ -113,7 +131,9 @@ Flags:
 | `--json` | Output as JSON |
 | `--days` | Lookback window in days when `--since`/`--until` are not set (default: `7`) |
 | `--all` | Include all historical sessions (cannot be used with `--days`, `--since`, `--until`) |
-| `--unit` | Token display unit for table output: `raw`, `k`, `m`, `g` (default: `k`) |
+| `--unit` | Token display unit for dashboard output: `raw`, `k`, `m`, `g` (default: `m`) |
+| `--group-by` | Aggregation dimension for `daily`: `cli` (default, provider/CLI view) or `model` (explicit opt-in) |
+| `--top` | Number of groups shown in the share section for the current grouping dimension (default: `5`) |
 | `--since` | Start date filter (format: `2006-01-02`) |
 | `--until` | End date filter (format: `2006-01-02`) |
 | `--provider` | Filter by provider name (e.g. `kimi`, `claude`, `codex`) |
@@ -123,10 +143,12 @@ Flags:
 | `--codex-dir` | Override Codex CLI data directory |
 
 Common combinations:
-- `codetok daily` — last 7 days, table unit `k`
+- `codetok daily` — last 7 days, dashboard grouped by CLI/provider, unit `m`
 - `codetok daily --unit raw` — last 7 days, raw integer token counts
 - `codetok daily --days 30 --unit m` — last 30 days, displayed in millions
 - `codetok daily --all --unit g` — full history, displayed in billions
+- `codetok daily --group-by model` — switch to model aggregation (explicit opt-in)
+- `codetok daily --top 10` — show Top 10 groups in share section
 
 ### `codetok session`
 

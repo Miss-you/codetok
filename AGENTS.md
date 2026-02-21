@@ -28,10 +28,18 @@ Important:
 ## Daily Command Contract
 
 - Default: `codetok daily` shows the latest 7-day rolling window.
+- Default grouping: `codetok daily` aggregates by CLI/provider (`--group-by cli`).
+- Model view (explicit opt-in): `codetok daily --group-by model`.
+- Default terminal output layout:
+  - `Daily Total Trend` (date-axis trend of total usage)
+  - `Model/CLI Total Ranking` (period total ranking by current group)
+  - `Top N Model/CLI Share` (share + detailed token split)
 - Full history: `codetok daily --all`.
 - Custom rolling window: `codetok daily --days N`.
 - Explicit range: `codetok daily --since YYYY-MM-DD --until YYYY-MM-DD`.
-- Display unit: `codetok daily --unit raw|k|m|g` (default `k`, table output only).
+- Display unit: `codetok daily --unit raw|k|m|g` (default `m`, dashboard output only).
+- Share section size: `codetok daily --top N` (default `5`, applies to the current group-by dimension).
+- JSON grouping semantics: `provider` keeps provider meaning; grouped dimension and value are described by `group_by` + `group`.
 
 Flag constraints:
 - `--all` is mutually exclusive with `--days`, `--since`, `--until`.

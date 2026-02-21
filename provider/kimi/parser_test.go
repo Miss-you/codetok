@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseWireJSONL_ValidData(t *testing.T) {
-	usage, turns, startTime, endTime, err := parseWireJSONL(filepath.Join("testdata", "wire.jsonl"))
+	usage, turns, startTime, endTime, modelName, err := parseWireJSONL(filepath.Join("testdata", "wire.jsonl"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,6 +47,9 @@ func TestParseWireJSONL_ValidData(t *testing.T) {
 	if !endTime.After(startTime) {
 		t.Error("endTime should be after startTime")
 	}
+	if modelName != "" {
+		t.Errorf("modelName = %q, want empty", modelName)
+	}
 }
 
 func TestParseWireJSONL_EmptyFile(t *testing.T) {
@@ -56,7 +59,7 @@ func TestParseWireJSONL_EmptyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	usage, turns, _, _, err := parseWireJSONL(emptyFile)
+	usage, turns, _, _, _, err := parseWireJSONL(emptyFile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -79,7 +82,7 @@ this is not valid json
 		t.Fatal(err)
 	}
 
-	usage, _, _, _, err := parseWireJSONL(wirePath)
+	usage, _, _, _, _, err := parseWireJSONL(wirePath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,7 +106,7 @@ func TestParseWireJSONL_NoStatusUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	usage, turns, _, _, err := parseWireJSONL(wirePath)
+	usage, turns, _, _, _, err := parseWireJSONL(wirePath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,6 +128,9 @@ func TestParseMetadata_ValidData(t *testing.T) {
 	}
 	if meta.Title != "Test Session Title" {
 		t.Errorf("Title = %q, want %q", meta.Title, "Test Session Title")
+	}
+	if meta.ModelName != "" {
+		t.Errorf("ModelName = %q, want empty", meta.ModelName)
 	}
 }
 
@@ -201,7 +207,7 @@ func TestCollectSessions_MultipleSessionDirs(t *testing.T) {
 }
 
 func TestTimestampExtraction(t *testing.T) {
-	usage, _, startTime, endTime, err := parseWireJSONL(filepath.Join("testdata", "wire.jsonl"))
+	usage, _, startTime, endTime, _, err := parseWireJSONL(filepath.Join("testdata", "wire.jsonl"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -219,5 +225,128 @@ func TestTimestampExtraction(t *testing.T) {
 	}
 	if endTime.Sub(expectedEnd).Abs() > time.Millisecond {
 		t.Errorf("endTime = %v, want close to %v", endTime, expectedEnd)
+	}
+}
+
+func TestParseWireJSONL_ModelExtraction(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"type": "metadata", "protocol_version": "1.2"}
+{"timestamp": 1770983424.646, "message": {"type": "TurnBegin", "payload": {"user_input": []}}}
+{"timestamp": 1770983426.420, "message": {"type": "StatusUpdate", "payload": {"model_name":"moonshot-v1-128k","token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}}}}
+{"timestamp": 1770983458.818, "message": {"type": "TurnEnd", "payload": {}}}
+`
+	wirePath := filepath.Join(dir, "wire.jsonl")
+	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _, _, modelName, err := parseWireJSONL(wirePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if modelName != "moonshot-v1-128k" {
+		t.Errorf("modelName = %q, want %q", modelName, "moonshot-v1-128k")
+	}
+}
+
+func TestParseSession_MetadataModelFallback(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "hashA", "uuid-1")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	wireContent := `{"type": "metadata", "protocol_version": "1.2"}
+{"timestamp": 1770983424.646, "message": {"type": "TurnBegin", "payload": {"user_input": []}}}
+{"timestamp": 1770983458.818, "message": {"type": "TurnEnd", "payload": {}}}
+`
+	if err := os.WriteFile(filepath.Join(sessionDir, "wire.jsonl"), []byte(wireContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	metaJSON := `{"session_id":"session-1","title":"Session","model_name":"moonshot-v1-32k"}`
+	if err := os.WriteFile(filepath.Join(sessionDir, "metadata.json"), []byte(metaJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := parseSession(sessionDir, "hashA", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.ModelName != "moonshot-v1-32k" {
+		t.Errorf("ModelName = %q, want %q", info.ModelName, "moonshot-v1-32k")
+	}
+}
+
+func TestNormalizeKimiModelName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "k2.5 short alias", in: "k2.5", want: "kimi-k2.5"},
+		{name: "k2.5 mixed case", in: " K2.5 ", want: "kimi-k2.5"},
+		{name: "k2-thinking short alias", in: "k2_thinking", want: "kimi-k2-thinking"},
+		{name: "k2-thinking canonical", in: "KIMI-K2-THINKING", want: "kimi-k2-thinking"},
+		{name: "unknown model unchanged", in: "moonshot-v1-32k", want: "moonshot-v1-32k"},
+		{name: "empty model", in: "   ", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeKimiModelName(tt.in)
+			if got != tt.want {
+				t.Fatalf("normalizeKimiModelName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCollectSessions_ModelFallbackFromLogs(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	logsDir := filepath.Join(homeDir, ".kimi", "logs")
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionID := "11111111-2222-3333-4444-555555555555"
+	logContent := `2026-02-20T10:00:00Z INFO Created new session: ` + sessionID + `
+2026-02-20T10:00:01Z INFO Using LLM model: provider='moonshot' model='K2.5'
+`
+	if err := os.WriteFile(filepath.Join(logsDir, "kimi-main.log"), []byte(logContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	baseDir := filepath.Join(homeDir, ".kimi", "sessions")
+	sessionDir := filepath.Join(baseDir, "hashA", sessionID)
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	wireContent := `{"timestamp": 1770983424.646, "message": {"type": "TurnBegin", "payload": {"user_input": []}}}
+{"timestamp": 1770983426.420, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}}}}
+{"timestamp": 1770983458.818, "message": {"type": "TurnEnd", "payload": {}}}
+`
+	if err := os.WriteFile(filepath.Join(sessionDir, "wire.jsonl"), []byte(wireContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	metaContent := `{"session_id":"` + sessionID + `","title":"Session Without Model"}`
+	if err := os.WriteFile(filepath.Join(sessionDir, "metadata.json"), []byte(metaContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Provider{}
+	sessions, err := p.CollectSessions(baseDir)
+	if err != nil {
+		t.Fatalf("CollectSessions returned error: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(sessions))
+	}
+	if sessions[0].ModelName != "kimi-k2.5" {
+		t.Fatalf("ModelName = %q, want %q", sessions[0].ModelName, "kimi-k2.5")
 	}
 }

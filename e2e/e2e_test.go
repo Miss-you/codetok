@@ -66,7 +66,7 @@ func runCodetok(t *testing.T, binPath string, args ...string) string {
 	return stdout.String()
 }
 
-func TestDailyCommand_JSONOutput(t *testing.T) {
+func TestDailyCommand_JSONOutput_DefaultGroupByCLI(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
 	args := isolatedArgs(t, "daily", "--json", "--all", "--kimi-dir", baseDir)
@@ -81,14 +81,17 @@ func TestDailyCommand_JSONOutput(t *testing.T) {
 		t.Fatalf("expected 2 daily entries, got %d: %s", len(daily), output)
 	}
 
-	// Verify each day has correct session count and provider
+	// Default grouping is by cli.
 	totalSessions := 0
 	totalTokens := 0
 	for _, d := range daily {
 		totalSessions += d.Sessions
 		totalTokens += d.TokenUsage.Total()
-		if d.ProviderName != "kimi" {
-			t.Errorf("expected provider %q, got %q", "kimi", d.ProviderName)
+		if d.GroupBy != "cli" {
+			t.Errorf("expected group_by %q, got %q", "cli", d.GroupBy)
+		}
+		if d.Group != "kimi" {
+			t.Errorf("expected cli group %q, got %q", "kimi", d.Group)
 		}
 	}
 
@@ -97,6 +100,43 @@ func TestDailyCommand_JSONOutput(t *testing.T) {
 	}
 
 	// Session1: 450+225+900+60=1635, Session2: 1000+500+2000+110=3610
+	expectedTotal := 1635 + 3610
+	if totalTokens != expectedTotal {
+		t.Errorf("expected %d total tokens, got %d", expectedTotal, totalTokens)
+	}
+}
+
+func TestDailyCommand_JSONOutput_GroupByModel(t *testing.T) {
+	bin := buildBinary(t)
+	baseDir := testdataDir(t)
+	args := isolatedArgs(t, "daily", "--json", "--all", "--group-by", "model", "--kimi-dir", baseDir)
+	output := runCodetok(t, bin, args...)
+
+	var daily []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+
+	if len(daily) != 2 {
+		t.Fatalf("expected 2 daily entries, got %d: %s", len(daily), output)
+	}
+
+	totalSessions := 0
+	totalTokens := 0
+	for _, d := range daily {
+		totalSessions += d.Sessions
+		totalTokens += d.TokenUsage.Total()
+		if d.GroupBy != "model" {
+			t.Errorf("expected group_by %q, got %q", "model", d.GroupBy)
+		}
+		if d.Group != "unknown (kimi)" {
+			t.Errorf("expected model group %q, got %q", "unknown (kimi)", d.Group)
+		}
+	}
+
+	if totalSessions != 2 {
+		t.Errorf("expected 2 total sessions, got %d", totalSessions)
+	}
 	expectedTotal := 1635 + 3610
 	if totalTokens != expectedTotal {
 		t.Errorf("expected %d total tokens, got %d", expectedTotal, totalTokens)
@@ -138,57 +178,80 @@ func TestSessionCommand_JSONOutput(t *testing.T) {
 	}
 }
 
-func TestDailyCommand_TableOutput(t *testing.T) {
+func TestDailyCommand_DashboardOutput_DefaultCLI(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
 	args := isolatedArgs(t, "daily", "--all", "--kimi-dir", baseDir)
 	output := runCodetok(t, bin, args...)
 
-	// Verify header
-	if !strings.Contains(output, "Date") {
-		t.Error("table output missing Date header")
+	// Verify three-section dashboard
+	if !strings.Contains(output, "Daily Total Trend") {
+		t.Error("dashboard output missing trend section header")
 	}
-	if !strings.Contains(output, "Provider") {
-		t.Error("table output missing Provider header")
+	if !strings.Contains(output, "CLI Total Ranking") {
+		t.Error("dashboard output missing CLI ranking section header")
 	}
-	if !strings.Contains(output, "Sessions") {
-		t.Error("table output missing Sessions header")
+	if !strings.Contains(output, "Top 5 CLI Share") {
+		t.Error("dashboard output missing CLI top share section header")
 	}
-	if !strings.Contains(output, "Total") {
-		t.Error("table output missing Total header")
+	if !strings.Contains(output, "Coverage:") {
+		t.Error("dashboard output missing coverage line")
 	}
-
-	// Verify TOTAL summary row
-	if !strings.Contains(output, "TOTAL") {
-		t.Error("table output missing TOTAL summary row")
+	if !strings.Contains(output, "Bar") {
+		t.Error("dashboard output missing bar row")
 	}
 
-	// Verify provider name appears in data rows
+	// Default group-by=cli should show provider group for testdata.
 	if !strings.Contains(output, "kimi") {
-		t.Error("table output missing kimi provider name")
-	}
-
-	// Should have at least header + 2 data rows + TOTAL row = 4 lines minimum
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) < 4 {
-		t.Errorf("expected at least 4 lines in table output, got %d:\n%s", len(lines), output)
+		t.Error("dashboard output missing default cli group 'kimi'")
 	}
 }
 
-func TestDailyCommand_TableOutput_UnitFlag(t *testing.T) {
+func TestDailyCommand_DashboardOutput_GroupByModel(t *testing.T) {
+	bin := buildBinary(t)
+	baseDir := testdataDir(t)
+	args := isolatedArgs(t, "daily", "--all", "--group-by", "model", "--kimi-dir", baseDir)
+	output := runCodetok(t, bin, args...)
+
+	if !strings.Contains(output, "Model Total Ranking") {
+		t.Error("dashboard output missing Model ranking section header")
+	}
+	if !strings.Contains(output, "Top 5 Model Share") {
+		t.Error("dashboard output missing Model top share section header")
+	}
+	if !strings.Contains(output, "unknown (kimi)") {
+		t.Error("dashboard output missing unknown (kimi) model group")
+	}
+}
+
+func TestDailyCommand_DashboardOutput_TopFlag(t *testing.T) {
+	bin := buildBinary(t)
+	baseDir := testdataDir(t)
+	args := isolatedArgs(t, "daily", "--all", "--top", "1", "--kimi-dir", baseDir)
+	output := runCodetok(t, bin, args...)
+
+	if !strings.Contains(output, "Top 1 CLI Share") {
+		t.Error("dashboard output missing custom top share section header")
+	}
+	if strings.Contains(output, "Top 5 CLI Share") {
+		t.Error("dashboard output should not show default top value when --top is set")
+	}
+}
+
+func TestDailyCommand_DashboardOutput_UnitFlag(t *testing.T) {
 	bin := buildBinary(t)
 	baseDir := testdataDir(t)
 
 	outputK := runCodetok(t, bin, isolatedArgs(t, "daily", "--all", "--unit", "k", "--kimi-dir", baseDir)...)
-	if !strings.Contains(outputK, "Input(k)") {
-		t.Errorf("expected Input(k) header, got:\n%s", outputK)
+	if !strings.Contains(outputK, "Total(k)") {
+		t.Errorf("expected Total(k) header, got:\n%s", outputK)
 	}
 	if !strings.Contains(outputK, "3.61k") {
 		t.Errorf("expected scaled token value 3.61k, got:\n%s", outputK)
 	}
 
 	outputRaw := runCodetok(t, bin, isolatedArgs(t, "daily", "--all", "--unit", "raw", "--kimi-dir", baseDir)...)
-	if !strings.Contains(outputRaw, "Input") || strings.Contains(outputRaw, "Input(k)") {
+	if strings.Contains(outputRaw, "Total(k)") {
 		t.Errorf("expected raw header without unit suffix, got:\n%s", outputRaw)
 	}
 	if !strings.Contains(outputRaw, "3610") {

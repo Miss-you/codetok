@@ -49,6 +49,9 @@ func TestParseClaudeSession_ValidData(t *testing.T) {
 	if info.ProviderName != "claude" {
 		t.Errorf("ProviderName = %q, want %q", info.ProviderName, "claude")
 	}
+	if info.ModelName != "claude-opus-4-6" {
+		t.Errorf("ModelName = %q, want %q", info.ModelName, "claude-opus-4-6")
+	}
 
 	if info.WorkDirHash != "project-a" {
 		t.Errorf("WorkDirHash = %q, want %q", info.WorkDirHash, "project-a")
@@ -117,6 +120,9 @@ func TestParseClaudeSession_Dedup(t *testing.T) {
 
 	if info.Turns != 2 {
 		t.Errorf("Turns = %d, want 2", info.Turns)
+	}
+	if info.ModelName != "" {
+		t.Errorf("ModelName = %q, want empty", info.ModelName)
 	}
 }
 

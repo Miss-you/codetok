@@ -1,13 +1,19 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/miss-you/codetok/provider"
+	"github.com/miss-you/codetok/stats"
 )
 
 func TestResolveDailyDateRange_DefaultWindow(t *testing.T) {
@@ -118,6 +124,40 @@ func TestResolveTokenUnit_Invalid(t *testing.T) {
 	}
 }
 
+func TestResolveGroupBy(t *testing.T) {
+	tests := []struct {
+		input string
+		want  stats.AggregateDimension
+	}{
+		{input: "model", want: stats.AggregateDimensionModel},
+		{input: "MODEL", want: stats.AggregateDimensionModel},
+		{input: "cli", want: stats.AggregateDimensionCLI},
+		{input: "", want: stats.AggregateDimensionCLI},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := resolveGroupBy(tt.input)
+			if err != nil {
+				t.Fatalf("resolveGroupBy(%q) returned error: %v", tt.input, err)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveGroupBy(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveGroupBy_Invalid(t *testing.T) {
+	_, err := resolveGroupBy("provider")
+	if err == nil {
+		t.Fatal("expected error for invalid group-by, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid --group-by") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestFormatTokenByUnit(t *testing.T) {
 	tests := []struct {
 		value int
@@ -151,21 +191,224 @@ func TestRunDaily_JSONIgnoresInvalidUnit(t *testing.T) {
 	if err := cmd.Flags().Set("provider", "nonexistent"); err != nil {
 		t.Fatalf("setting --provider: %v", err)
 	}
-
-	oldStdout := os.Stdout
-	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatalf("opening %s: %v", os.DevNull, err)
+	if err := cmd.Flags().Set("group-by", "cli"); err != nil {
+		t.Fatalf("setting --group-by: %v", err)
 	}
-	os.Stdout = devNull
-	defer func() {
-		os.Stdout = oldStdout
-		_ = devNull.Close()
+
+	output := captureStdout(t, func() {
+		if err := runDaily(cmd, nil); err != nil {
+			t.Fatalf("runDaily returned error for json output with invalid unit: %v", err)
+		}
+	})
+
+	var got []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("json output should be parseable: %v\noutput: %s", err, output)
+	}
+	if strings.Contains(output, "Daily Total Trend") {
+		t.Fatalf("json output polluted by UI text:\n%s", output)
+	}
+}
+
+func TestRunDaily_InvalidTop(t *testing.T) {
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("top", "0"); err != nil {
+		t.Fatalf("setting --top: %v", err)
+	}
+	if err := cmd.Flags().Set("provider", "nonexistent"); err != nil {
+		t.Fatalf("setting --provider: %v", err)
+	}
+
+	err := runDaily(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "invalid --top") {
+		t.Fatalf("expected invalid --top error, got: %v", err)
+	}
+}
+
+func TestRunDaily_JSONIgnoresInvalidTop(t *testing.T) {
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("top", "0"); err != nil {
+		t.Fatalf("setting --top: %v", err)
+	}
+	if err := cmd.Flags().Set("provider", "nonexistent"); err != nil {
+		t.Fatalf("setting --provider: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runDaily(cmd, nil); err != nil {
+			t.Fatalf("runDaily returned error for json output with invalid top: %v", err)
+		}
+	})
+
+	var got []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("json output should be parseable: %v\noutput: %s", err, output)
+	}
+	if strings.Contains(output, "Daily Total Trend") {
+		t.Fatalf("json output polluted by UI text:\n%s", output)
+	}
+}
+
+func TestPrintDailyDashboard_ThreeSectionLayout_Model(t *testing.T) {
+	daily := []provider.DailyStats{
+		{
+			Date:         "2026-02-14",
+			ProviderName: "gpt-5-codex",
+			Sessions:     1,
+			TokenUsage: provider.TokenUsage{
+				InputOther:       100,
+				Output:           50,
+				InputCacheRead:   200,
+				InputCacheCreate: 10,
+			},
+		},
+		{
+			Date:         "2026-02-15",
+			ProviderName: "gpt-5-codex",
+			Sessions:     1,
+			TokenUsage: provider.TokenUsage{
+				InputOther:       200,
+				Output:           80,
+				InputCacheRead:   100,
+				InputCacheCreate: 20,
+			},
+		},
+		{
+			Date:         "2026-02-15",
+			ProviderName: "claude-opus-4-6",
+			Sessions:     2,
+			TokenUsage: provider.TokenUsage{
+				InputOther:       400,
+				Output:           100,
+				InputCacheRead:   200,
+				InputCacheCreate: 40,
+			},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		printDailyDashboard(daily, tokenUnitK, stats.AggregateDimensionModel, 2)
+	})
+
+	assertContainsAll(t, output,
+		"Daily Total Trend",
+		"Model Total Ranking",
+		"Top 2 Model Share",
+		"Coverage:",
+		"Bar",
+		"gpt-5-codex",
+		"claude-opus-4-6",
+	)
+}
+
+func TestPrintDailyDashboard_GroupByCLI(t *testing.T) {
+	daily := []provider.DailyStats{
+		{
+			Date:         "2026-02-14",
+			ProviderName: "kimi",
+			Sessions:     1,
+			TokenUsage: provider.TokenUsage{
+				InputOther:       500,
+				Output:           250,
+				InputCacheRead:   1000,
+				InputCacheCreate: 50,
+			},
+		},
+		{
+			Date:         "2026-02-15",
+			ProviderName: "codex",
+			Sessions:     1,
+			TokenUsage: provider.TokenUsage{
+				InputOther:       100,
+				Output:           50,
+				InputCacheRead:   200,
+				InputCacheCreate: 10,
+			},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		printDailyDashboard(daily, tokenUnitRaw, stats.AggregateDimensionCLI, 1)
+	})
+
+	assertContainsAll(t, output,
+		"CLI Total Ranking",
+		"Top 1 CLI Share",
+		"kimi",
+	)
+}
+
+func TestPrintTopGroupShare_RespectsTopN(t *testing.T) {
+	groupTotals := []groupTotal{
+		{
+			Name:     "kimi",
+			Sessions: 3,
+			TokenUsage: provider.TokenUsage{
+				InputOther:       900,
+				Output:           300,
+				InputCacheRead:   600,
+				InputCacheCreate: 150,
+			},
+		},
+		{
+			Name:     "codex",
+			Sessions: 2,
+			TokenUsage: provider.TokenUsage{
+				InputOther:       200,
+				Output:           100,
+				InputCacheRead:   100,
+				InputCacheCreate: 50,
+			},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		printTopGroupShare(groupTotals, tokenUnitRaw, stats.AggregateDimensionCLI, 1)
+	})
+
+	assertContainsAll(t, output, "Top 1 CLI Share", "Coverage:")
+	if strings.Contains(output, "\n2\t") {
+		t.Fatalf("top=1 should only print one ranked row:\n%s", output)
+	}
+	if strings.Contains(output, "codex\t") {
+		t.Fatalf("top=1 should not include second group in share table:\n%s", output)
+	}
+}
+
+func assertContainsAll(t *testing.T, text string, values ...string) {
+	t.Helper()
+	for _, v := range values {
+		if !strings.Contains(text, v) {
+			t.Fatalf("output missing %q:\n%s", v, text)
+		}
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("creating stdout pipe: %v", err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
 	}()
 
-	if err := runDaily(cmd, nil); err != nil {
-		t.Fatalf("runDaily returned error for json output with invalid unit: %v", err)
-	}
+	fn()
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+	output := <-done
+	_ = r.Close()
+	return output
 }
 
 func newDailyTestCommand() *cobra.Command {
@@ -176,7 +419,12 @@ func newDailyTestCommand() *cobra.Command {
 	cmd.Flags().Int("days", defaultDailyDays, "")
 	cmd.Flags().Bool("all", false, "")
 	cmd.Flags().String("unit", defaultTokenUnit, "")
+	cmd.Flags().String("group-by", defaultGroupBy, "")
+	cmd.Flags().Int("top", defaultTopN, "")
 	cmd.Flags().String("provider", "", "")
 	cmd.Flags().String("base-dir", "", "")
+	cmd.Flags().String("kimi-dir", "", "")
+	cmd.Flags().String("claude-dir", "", "")
+	cmd.Flags().String("codex-dir", "", "")
 	return cmd
 }
