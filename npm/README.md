@@ -11,6 +11,7 @@ npm install -g @yousali/codetok
 ## How it works
 
 - During `postinstall`, this package downloads the matching binary from GitHub Releases.
+- Downloads use a `180s` timeout with up to `3` retries and exponential backoff.
 - The `codetok` command then runs that native binary.
 
 Supported targets:
