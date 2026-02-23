@@ -1,13 +1,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
-import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import extract from 'extract-zip';
 import { x as extractTar } from 'tar';
+import { downloadToFile } from './download.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,21 +18,6 @@ const vendorDir = path.join(pkgRoot, 'vendor');
 const project = 'codetok';
 const owner = 'miss-you';
 const repo = 'codetok';
-const maxRedirects = 5;
-const requestTimeoutMs = 180_000;
-const maxDownloadRetries = 3;
-const retryBaseDelayMs = 1_000;
-const retriableStatusCodes = new Set([408, 425, 429, 500, 502, 503, 504]);
-const retriableErrorCodes = new Set([
-  'ETIMEDOUT',
-  'ECONNRESET',
-  'ECONNREFUSED',
-  'EPIPE',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  'ENOTFOUND',
-  'EAI_AGAIN',
-]);
 
 const isWindows = process.platform === 'win32';
 const binaryName = isWindows ? 'codetok.exe' : 'codetok';
@@ -168,126 +153,6 @@ async function sha256(filePath) {
     rs.on('data', (chunk) => hash.update(chunk));
     rs.on('end', () => resolve(hash.digest('hex')));
   });
-}
-
-async function downloadToFile(url, destPath) {
-  let lastErr;
-  let attemptsMade = 0;
-  for (let attempt = 0; attempt <= maxDownloadRetries; attempt += 1) {
-    attemptsMade = attempt + 1;
-    if (attempt > 0) {
-      const delayMs = retryBaseDelayMs * 2 ** (attempt - 1);
-      console.warn(`[codetok] retry ${attempt}/${maxDownloadRetries} in ${delayMs}ms: ${url}`);
-      await sleep(delayMs);
-    }
-
-    await fsp.rm(destPath, { force: true }).catch(() => {});
-
-    try {
-      await downloadToFileOnce(url, destPath, 0);
-      return;
-    } catch (err) {
-      lastErr = err;
-      if (!isRetriableDownloadError(err) || attempt === maxDownloadRetries) {
-        break;
-      }
-    }
-  }
-
-  const attemptWord = attemptsMade === 1 ? 'attempt' : 'attempts';
-  const message = lastErr ? lastErr.message : 'unknown download error';
-  throw new Error(`download failed after ${attemptsMade} ${attemptWord} for ${url}: ${message}`);
-}
-
-async function downloadToFileOnce(url, destPath, redirects = 0) {
-  if (redirects > maxRedirects) {
-    throw new Error(`too many redirects while downloading ${url}`);
-  }
-
-  return new Promise((resolve, reject) => {
-    let done = false;
-    const finish = (err) => {
-      if (done) {
-        return;
-      }
-      done = true;
-      if (err) {
-        reject(err);
-        return;
-      }
-      resolve();
-    };
-
-    const req = https.get(
-      url,
-      {
-        headers: {
-          'User-Agent': 'codetok-npm-installer',
-        },
-      },
-      (res) => {
-        if (
-          res.statusCode &&
-          [301, 302, 303, 307, 308].includes(res.statusCode) &&
-          res.headers.location
-        ) {
-          const nextURL = new URL(res.headers.location, url).toString();
-          res.resume();
-          downloadToFileOnce(nextURL, destPath, redirects + 1)
-            .then(() => finish())
-            .catch(finish);
-          return;
-        }
-
-        if (res.statusCode !== 200) {
-          res.resume();
-          const statusErr = new Error(`download failed (${res.statusCode}) for ${url}`);
-          statusErr.statusCode = res.statusCode;
-          finish(statusErr);
-          return;
-        }
-
-        const ws = fs.createWriteStream(destPath);
-        ws.on('error', (err) => {
-          res.destroy();
-          finish(err);
-        });
-        ws.on('finish', () => finish());
-        res.on('error', (err) => {
-          ws.destroy();
-          finish(err);
-        });
-        res.pipe(ws);
-      }
-    );
-
-    req.setTimeout(requestTimeoutMs, () => {
-      const timeoutErr = new Error(`download timeout after ${requestTimeoutMs}ms for ${url}`);
-      timeoutErr.code = 'ETIMEDOUT';
-      req.destroy(timeoutErr);
-    });
-    req.on('error', finish);
-  });
-}
-
-function isRetriableDownloadError(err) {
-  if (!err) {
-    return false;
-  }
-
-  if (typeof err.statusCode === 'number') {
-    return retriableStatusCodes.has(err.statusCode);
-  }
-
-  if (typeof err.code === 'string' && retriableErrorCodes.has(err.code)) {
-    return true;
-  }
-
-  return typeof err.message === 'string' && err.message.toLowerCase().includes('timeout');
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function findFileByName(rootDir, name) {
