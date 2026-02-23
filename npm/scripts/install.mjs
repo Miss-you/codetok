@@ -1,13 +1,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
-import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import extract from 'extract-zip';
 import { x as extractTar } from 'tar';
+import { downloadToFile } from './download.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,8 +18,6 @@ const vendorDir = path.join(pkgRoot, 'vendor');
 const project = 'codetok';
 const owner = 'miss-you';
 const repo = 'codetok';
-const maxRedirects = 5;
-const requestTimeoutMs = 60_000;
 
 const isWindows = process.platform === 'win32';
 const binaryName = isWindows ? 'codetok.exe' : 'codetok';
@@ -154,71 +152,6 @@ async function sha256(filePath) {
     rs.on('error', reject);
     rs.on('data', (chunk) => hash.update(chunk));
     rs.on('end', () => resolve(hash.digest('hex')));
-  });
-}
-
-async function downloadToFile(url, destPath, redirects = 0) {
-  if (redirects > maxRedirects) {
-    throw new Error(`too many redirects while downloading ${url}`);
-  }
-
-  return new Promise((resolve, reject) => {
-    let done = false;
-    const finish = (err) => {
-      if (done) {
-        return;
-      }
-      done = true;
-      if (err) {
-        reject(err);
-        return;
-      }
-      resolve();
-    };
-
-    const req = https.get(
-      url,
-      {
-        headers: {
-          'User-Agent': 'codetok-npm-installer',
-        },
-      },
-      (res) => {
-        if (
-          res.statusCode &&
-          [301, 302, 303, 307, 308].includes(res.statusCode) &&
-          res.headers.location
-        ) {
-          const nextURL = new URL(res.headers.location, url).toString();
-          res.resume();
-          downloadToFile(nextURL, destPath, redirects + 1).then(() => finish()).catch(finish);
-          return;
-        }
-
-        if (res.statusCode !== 200) {
-          res.resume();
-          finish(new Error(`download failed (${res.statusCode}) for ${url}`));
-          return;
-        }
-
-        const ws = fs.createWriteStream(destPath);
-        ws.on('error', (err) => {
-          res.destroy();
-          finish(err);
-        });
-        ws.on('finish', () => finish());
-        res.on('error', (err) => {
-          ws.destroy();
-          finish(err);
-        });
-        res.pipe(ws);
-      }
-    );
-
-    req.setTimeout(requestTimeoutMs, () => {
-      req.destroy(new Error(`download timeout after ${requestTimeoutMs}ms for ${url}`));
-    });
-    req.on('error', finish);
   });
 }
 

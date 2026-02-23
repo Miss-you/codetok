@@ -15,7 +15,8 @@
     "codetok": "bin/codetok.js"
   },
   "scripts": {
-    "postinstall": "node scripts/install.mjs"
+    "postinstall": "node scripts/install.mjs",
+    "test:installer": "node --test test/download.test.mjs"
   },
   "dependencies": {
     "extract-zip": "^2.0.1",
