@@ -3,6 +3,7 @@ package claude
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -56,7 +57,8 @@ type claudeUsage struct {
 // When baseDir is empty, both ~/.claude/projects and ~/.claude-internal/projects are scanned.
 func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, error) {
 	var baseDirs []string
-	if baseDir != "" {
+	isExplicit := baseDir != ""
+	if isExplicit {
 		baseDirs = []string{baseDir}
 	} else {
 		home, err := os.UserHomeDir()
@@ -74,7 +76,16 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 	pathToSlug := make(map[string]string)
 
 	for _, dir := range baseDirs {
-		collectPaths(dir, &paths, pathToSlug)
+		if err := collectPaths(dir, &paths, pathToSlug); err != nil {
+			if isExplicit {
+				// Explicit --claude-dir: propagate all errors
+				return nil, err
+			}
+			// Default dirs: skip non-existent, propagate other errors
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, err
+			}
+		}
 	}
 
 	// Phase 2: Parse all sessions in parallel
@@ -87,10 +98,11 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 
 // collectPaths walks a base directory and appends discovered JSONL session file paths.
 // It scans both top-level session files and subagent files in <session-uuid>/subagents/.
-func collectPaths(baseDir string, paths *[]string, pathToSlug map[string]string) {
+// Returns an error if the base directory cannot be read.
+func collectPaths(baseDir string, paths *[]string, pathToSlug map[string]string) error {
 	projectDirs, err := os.ReadDir(baseDir)
 	if err != nil {
-		return // skip non-existent or unreadable directories
+		return err
 	}
 
 	for _, pd := range projectDirs {
@@ -131,6 +143,8 @@ func collectPaths(baseDir string, paths *[]string, pathToSlug map[string]string)
 			}
 		}
 	}
+
+	return nil
 }
 
 // parseSession parses a single Claude Code JSONL session file.

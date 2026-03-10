@@ -344,17 +344,29 @@ func TestCollectClaudeSessions_EmptySubagentsDir(t *testing.T) {
 	}
 }
 
-func TestCollectClaudeSessions_MissingDirectoryGraceful(t *testing.T) {
-	// Point to a non-existent directory — collectPaths should skip it
+func TestCollectClaudeSessions_ExplicitMissingDirReturnsError(t *testing.T) {
+	// Explicit --claude-dir pointing to non-existent path should return an error
 	baseDir := filepath.Join(t.TempDir(), "nonexistent")
 
 	prov := &Provider{}
-	result, err := prov.CollectSessions(baseDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := prov.CollectSessions(baseDir)
+	if err == nil {
+		t.Fatal("expected error for explicit non-existent directory, got nil")
 	}
-	if len(result) != 0 {
-		t.Errorf("got %d sessions, want 0", len(result))
+}
+
+func TestCollectPaths_MissingDirReturnsError(t *testing.T) {
+	// collectPaths should return an error for non-existent directories
+	baseDir := filepath.Join(t.TempDir(), "nonexistent")
+
+	var paths []string
+	pathToSlug := make(map[string]string)
+	err := collectPaths(baseDir, &paths, pathToSlug)
+	if err == nil {
+		t.Fatal("expected error for non-existent directory, got nil")
+	}
+	if len(paths) != 0 {
+		t.Errorf("got %d paths, want 0", len(paths))
 	}
 }
 
@@ -411,8 +423,12 @@ func TestCollectPaths_MultipleBaseDirs(t *testing.T) {
 
 	var paths []string
 	pathToSlug := make(map[string]string)
-	collectPaths(dir1, &paths, pathToSlug)
-	collectPaths(dir2, &paths, pathToSlug)
+	if err := collectPaths(dir1, &paths, pathToSlug); err != nil {
+		t.Fatal(err)
+	}
+	if err := collectPaths(dir2, &paths, pathToSlug); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(paths) != 2 {
 		t.Fatalf("got %d paths, want 2", len(paths))
