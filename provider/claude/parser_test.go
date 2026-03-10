@@ -262,6 +262,187 @@ func TestParseClaudeSession_NoAssistantMessages(t *testing.T) {
 	}
 }
 
+func TestCollectClaudeSessions_SubagentDiscovery(t *testing.T) {
+	baseDir := t.TempDir()
+
+	// Create a project with a top-level session file and subagent files
+	projectDir := filepath.Join(baseDir, "project-x")
+	subagentsDir := filepath.Join(projectDir, "session-abc", "subagents")
+	if err := os.MkdirAll(subagentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionContent := `{"type":"user","userType":"external","sessionId":"session-abc","timestamp":"2026-02-15T09:59:00.000Z","message":{"role":"user","content":"Hello"}}
+{"type":"assistant","sessionId":"session-abc","timestamp":"2026-02-15T10:00:00.000Z","message":{"id":"msg-parent","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"Hi"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":50,"cache_read_input_tokens":200,"output_tokens":30}}}
+`
+	subagentContent := `{"type":"user","userType":"external","sessionId":"session-abc","timestamp":"2026-02-15T10:01:00.000Z","message":{"role":"user","content":"Sub task"}}
+{"type":"assistant","sessionId":"session-abc","timestamp":"2026-02-15T10:02:00.000Z","message":{"id":"msg-sub1","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"text","text":"Done"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":80,"output_tokens":20}}}
+`
+
+	// Write parent session file
+	if err := os.WriteFile(filepath.Join(projectDir, "session-abc.jsonl"), []byte(sessionContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Write subagent file
+	if err := os.WriteFile(filepath.Join(subagentsDir, "agent-a123.jsonl"), []byte(subagentContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prov := &Provider{}
+	result, err := prov.CollectSessions(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result) != 2 {
+		t.Fatalf("got %d sessions, want 2 (parent + subagent)", len(result))
+	}
+
+	// Both should have the same project slug
+	for _, s := range result {
+		if s.WorkDirHash != "project-x" {
+			t.Errorf("WorkDirHash = %q, want %q", s.WorkDirHash, "project-x")
+		}
+	}
+
+	// Sum up tokens from all sessions
+	totalInput := 0
+	for _, s := range result {
+		totalInput += s.TokenUsage.InputOther
+	}
+	if totalInput != 150 {
+		t.Errorf("total InputOther = %d, want 150 (100 + 50)", totalInput)
+	}
+}
+
+func TestCollectClaudeSessions_EmptySubagentsDir(t *testing.T) {
+	baseDir := t.TempDir()
+
+	projectDir := filepath.Join(baseDir, "project-y")
+	subagentsDir := filepath.Join(projectDir, "session-def", "subagents")
+	if err := os.MkdirAll(subagentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionContent := `{"type":"user","userType":"external","sessionId":"session-def","timestamp":"2026-02-15T09:59:00.000Z","message":{"role":"user","content":"Hello"}}
+{"type":"assistant","sessionId":"session-def","timestamp":"2026-02-15T10:00:00.000Z","message":{"id":"msg-1","role":"assistant","content":[{"type":"text","text":"Hi"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":30}}}
+`
+	if err := os.WriteFile(filepath.Join(projectDir, "session-def.jsonl"), []byte(sessionContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Empty subagents dir — should not cause errors
+
+	prov := &Provider{}
+	result, err := prov.CollectSessions(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Only the parent session should be found
+	if len(result) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(result))
+	}
+}
+
+func TestCollectClaudeSessions_ExplicitMissingDirReturnsError(t *testing.T) {
+	// Explicit --claude-dir pointing to non-existent path should return an error
+	baseDir := filepath.Join(t.TempDir(), "nonexistent")
+
+	prov := &Provider{}
+	_, err := prov.CollectSessions(baseDir)
+	if err == nil {
+		t.Fatal("expected error for explicit non-existent directory, got nil")
+	}
+}
+
+func TestCollectPaths_MissingDirReturnsError(t *testing.T) {
+	// collectPaths should return an error for non-existent directories
+	baseDir := filepath.Join(t.TempDir(), "nonexistent")
+
+	var paths []string
+	pathToSlug := make(map[string]string)
+	err := collectPaths(baseDir, &paths, pathToSlug)
+	if err == nil {
+		t.Fatal("expected error for non-existent directory, got nil")
+	}
+	if len(paths) != 0 {
+		t.Errorf("got %d paths, want 0", len(paths))
+	}
+}
+
+func TestCollectClaudeSessions_FlagOverride(t *testing.T) {
+	// When baseDir is explicitly set, only that directory should be scanned
+	baseDir := t.TempDir()
+	projectDir := filepath.Join(baseDir, "project-z")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionContent := `{"type":"user","userType":"external","sessionId":"s1","timestamp":"2026-02-15T09:59:00.000Z","message":{"role":"user","content":"Hello"}}
+{"type":"assistant","sessionId":"s1","timestamp":"2026-02-15T10:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":30}}}
+`
+	if err := os.WriteFile(filepath.Join(projectDir, "sess.jsonl"), []byte(sessionContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prov := &Provider{}
+	result, err := prov.CollectSessions(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(result))
+	}
+	if result[0].WorkDirHash != "project-z" {
+		t.Errorf("WorkDirHash = %q, want %q", result[0].WorkDirHash, "project-z")
+	}
+}
+
+func TestCollectPaths_MultipleBaseDirs(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+
+	sessionContent := `{"type":"assistant","sessionId":"s1","timestamp":"2026-02-15T10:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":30}}}
+`
+
+	// Create session in dir1
+	if err := os.MkdirAll(filepath.Join(dir1, "proj-a"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir1, "proj-a", "s1.jsonl"), []byte(sessionContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create session in dir2
+	if err := os.MkdirAll(filepath.Join(dir2, "proj-b"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir2, "proj-b", "s2.jsonl"), []byte(sessionContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var paths []string
+	pathToSlug := make(map[string]string)
+	if err := collectPaths(dir1, &paths, pathToSlug); err != nil {
+		t.Fatal(err)
+	}
+	if err := collectPaths(dir2, &paths, pathToSlug); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(paths) != 2 {
+		t.Fatalf("got %d paths, want 2", len(paths))
+	}
+
+	slugs := make(map[string]bool)
+	for _, p := range paths {
+		slugs[pathToSlug[p]] = true
+	}
+	if !slugs["proj-a"] || !slugs["proj-b"] {
+		t.Errorf("expected slugs proj-a and proj-b, got %v", slugs)
+	}
+}
+
 func TestCollectClaudeSessions_MultipleProjects(t *testing.T) {
 	baseDir := t.TempDir()
 
