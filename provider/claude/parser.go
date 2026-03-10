@@ -53,22 +53,44 @@ type claudeUsage struct {
 
 // CollectSessions scans baseDir for Claude Code session files and returns session info.
 // The expected layout is: baseDir/<project-slug>/<session-uuid>.jsonl
+// When baseDir is empty, both ~/.claude/projects and ~/.claude-internal/projects are scanned.
 func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, error) {
-	if baseDir == "" {
+	var baseDirs []string
+	if baseDir != "" {
+		baseDirs = []string{baseDir}
+	} else {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, err
 		}
-		baseDir = filepath.Join(home, ".claude", "projects")
+		baseDirs = []string{
+			filepath.Join(home, ".claude", "projects"),
+			filepath.Join(home, ".claude-internal", "projects"),
+		}
 	}
 
 	// Phase 1: Walk directories, collect all session file paths (sequential, fast)
 	var paths []string
 	pathToSlug := make(map[string]string)
 
+	for _, dir := range baseDirs {
+		collectPaths(dir, &paths, pathToSlug)
+	}
+
+	// Phase 2: Parse all sessions in parallel
+	sessions := provider.ParseParallel(paths, 0, func(path string) (provider.SessionInfo, error) {
+		return parseSession(path, pathToSlug[path])
+	})
+
+	return sessions, nil
+}
+
+// collectPaths walks a base directory and appends discovered JSONL session file paths.
+// It scans both top-level session files and subagent files in <session-uuid>/subagents/.
+func collectPaths(baseDir string, paths *[]string, pathToSlug map[string]string) {
 	projectDirs, err := os.ReadDir(baseDir)
 	if err != nil {
-		return nil, err
+		return // skip non-existent or unreadable directories
 	}
 
 	for _, pd := range projectDirs {
@@ -84,25 +106,31 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 		}
 
 		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			if !strings.HasSuffix(entry.Name(), ".jsonl") {
+			if !entry.IsDir() {
+				if strings.HasSuffix(entry.Name(), ".jsonl") {
+					sessionPath := filepath.Join(projectPath, entry.Name())
+					*paths = append(*paths, sessionPath)
+					pathToSlug[sessionPath] = projectSlug
+				}
 				continue
 			}
 
-			sessionPath := filepath.Join(projectPath, entry.Name())
-			paths = append(paths, sessionPath)
-			pathToSlug[sessionPath] = projectSlug
+			// Check for subagents/ subdirectory inside session directories
+			subagentsDir := filepath.Join(projectPath, entry.Name(), "subagents")
+			subEntries, err := os.ReadDir(subagentsDir)
+			if err != nil {
+				continue
+			}
+			for _, sub := range subEntries {
+				if sub.IsDir() || !strings.HasSuffix(sub.Name(), ".jsonl") {
+					continue
+				}
+				subPath := filepath.Join(subagentsDir, sub.Name())
+				*paths = append(*paths, subPath)
+				pathToSlug[subPath] = projectSlug
+			}
 		}
 	}
-
-	// Phase 2: Parse all sessions in parallel
-	sessions := provider.ParseParallel(paths, 0, func(path string) (provider.SessionInfo, error) {
-		return parseSession(path, pathToSlug[path])
-	})
-
-	return sessions, nil
 }
 
 // parseSession parses a single Claude Code JSONL session file.

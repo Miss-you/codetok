@@ -1,0 +1,2 @@
+{"type":"user","userType":"external","sessionId":"session-main","timestamp":"2026-02-15T09:59:00.000Z","message":{"role":"user","content":"Hello from main session"}}
+{"type":"assistant","requestId":"req-1","sessionId":"session-main","timestamp":"2026-02-15T10:00:00.000Z","message":{"id":"msg-1","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"Hi there"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":50,"cache_read_input_tokens":200,"output_tokens":30}}}
