@@ -13,11 +13,11 @@ Supported providers:
 - **Kimi CLI** — parses `~/.kimi/sessions/**/wire.jsonl`
 - **Claude Code** — parses `~/.claude/projects/**/*.jsonl` (with streaming deduplication)
 - **Codex CLI** — parses `~/.codex/sessions/**/*.jsonl`
+- **Cursor** — parses imported Cursor usage export CSVs from `~/.codetok/cursor/**/*.csv`
 
 Planned:
 
 - OpenCode
-- Cursor
 
 ## Installation
 
@@ -84,6 +84,9 @@ codetok daily --since 2026-02-01 --until 2026-02-15
 codetok daily --provider claude
 codetok session --provider kimi
 
+# Read imported Cursor usage exports from a custom directory
+codetok daily --all --cursor-dir ~/Downloads/cursor-usage
+
 # Switch aggregation to model view (explicit opt-in)
 codetok daily --group-by model
 
@@ -112,7 +115,8 @@ EMPTY_DIR="$(mktemp -d)"
 ./bin/codetok daily --all \
   --kimi-dir "$(pwd)/e2e/testdata/sessions" \
   --claude-dir "$EMPTY_DIR" \
-  --codex-dir "$EMPTY_DIR"
+  --codex-dir "$EMPTY_DIR" \
+  --cursor-dir "$EMPTY_DIR"
 rm -rf "$EMPTY_DIR"
 ```
 
@@ -166,6 +170,7 @@ Flags:
 | `--kimi-dir` | Override Kimi CLI data directory |
 | `--claude-dir` | Override Claude Code data directory |
 | `--codex-dir` | Override Codex CLI data directory |
+| `--cursor-dir` | Override Cursor CSV import directory |
 
 Common combinations:
 - `codetok daily` — last 7 days, dashboard grouped by CLI/provider, unit `m`
@@ -186,7 +191,7 @@ Date        Provider  Session                               Title               
 TOTAL                                                                                  2965044   369854  27973571
 ```
 
-Flags: `--json`, `--since`, `--until`, `--provider`, `--base-dir`, `--kimi-dir`, `--claude-dir`, `--codex-dir`.
+Flags: `--json`, `--since`, `--until`, `--provider`, `--base-dir`, `--kimi-dir`, `--claude-dir`, `--codex-dir`, `--cursor-dir`.
 
 ### `codetok version`
 
@@ -194,7 +199,7 @@ Print version information. Commit hash and build date are shown when available.
 
 ## How It Works
 
-codetok reads local session data that AI coding CLIs store on disk. Each provider has its own parser that understands the tool's data format. All session files are parsed in parallel using bounded goroutines (default: `min(NumCPU, 8)`, configurable via `CODETOK_WORKERS` env var).
+codetok reads local session data and imported usage exports stored on disk. Each provider has its own parser that understands the tool's data format. All session files are parsed in parallel using bounded goroutines (default: `min(NumCPU, 8)`, configurable via `CODETOK_WORKERS` env var).
 
 Statistics scope:
 - Token usage is computed by aggregating token counters from existing local session logs.
@@ -211,6 +216,12 @@ Statistics scope:
 **Codex CLI** — `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`
 - Parses `event_msg` events with `payload.type="token_count"`
 - Takes the last (cumulative) token count per session
+
+**Cursor** — `~/.codetok/cursor/*.csv`
+- Parses imported Cursor dashboard usage export CSV rows from disk
+- Maps `Input (w/o Cache Write)`, `Input (w/ Cache Write)`, `Cache Read`, and `Output Tokens` into `codetok` token fields
+- Treats each CSV row as one local usage record for session/day views
+- Cursor Tab token usage is not supported because the exported data does not provide a defensible Tab token split
 
 ## Project Structure
 
@@ -229,6 +240,8 @@ codetok/
 │   │   └── parser.go       # Kimi CLI wire.jsonl parser
 │   ├── claude/
 │   │   └── parser.go       # Claude Code JSONL parser (with dedup)
+│   ├── cursor/
+│   │   └── parser.go       # Cursor usage CSV parser
 │   └── codex/
 │       └── parser.go       # Codex CLI JSONL parser
 ├── stats/
