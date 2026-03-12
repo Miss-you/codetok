@@ -93,6 +93,31 @@ codetok daily --top 10
 
 Tip: if you changed code and run `./bin/codetok`, run `make build` first to refresh the binary.
 
+## Validation Workflow
+
+Use the documented repository checks before opening a PR:
+
+```bash
+make fmt
+make vet
+make test
+make lint
+make build
+```
+
+To smoke-test the built binary against bundled fixtures instead of your real session logs:
+
+```bash
+EMPTY_DIR="$(mktemp -d)"
+./bin/codetok daily --all \
+  --kimi-dir "$(pwd)/e2e/testdata/sessions" \
+  --claude-dir "$EMPTY_DIR" \
+  --codex-dir "$EMPTY_DIR"
+rm -rf "$EMPTY_DIR"
+```
+
+That command should print the default dashboard sections: `Daily Total Trend`, `CLI Total Ranking`, and `Top 5 CLI Share`.
+
 ## Usage
 
 ### `codetok daily`
