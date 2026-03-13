@@ -199,7 +199,7 @@ Print version information. Commit hash and build date are shown when available.
 
 ## How It Works
 
-codetok reads local session data and imported usage exports stored on disk. Each provider has its own parser that understands the tool's data format. All session files are parsed in parallel using bounded goroutines (default: `min(NumCPU, 8)`, configurable via `CODETOK_WORKERS` env var).
+codetok reads local session data and imported usage exports stored on disk. Each provider has its own parser that understands the tool's data format. JSONL session files are parsed in parallel using bounded goroutines (default: `min(NumCPU, 8)`, configurable via `CODETOK_WORKERS` env var); Cursor CSV imports are discovered recursively and parsed one file at a time.
 
 Statistics scope:
 - Token usage is computed by aggregating token counters from existing local session logs.
@@ -217,7 +217,7 @@ Statistics scope:
 - Parses `event_msg` events with `payload.type="token_count"`
 - Takes the last (cumulative) token count per session
 
-**Cursor** — `~/.codetok/cursor/*.csv`
+**Cursor** — `~/.codetok/cursor/**/*.csv`
 - Parses imported Cursor dashboard usage export CSV rows from disk
 - Maps `Input (w/o Cache Write)`, `Input (w/ Cache Write)`, `Cache Read`, and `Output Tokens` into `codetok` token fields
 - Treats each CSV row as one local usage record for session/day views

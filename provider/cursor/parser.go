@@ -2,6 +2,7 @@ package cursor
 
 import (
 	"encoding/csv"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,6 +29,16 @@ const (
 	cursorInputCacheReadHeader   = "Cache Read"
 	cursorOutputHeader           = "Output Tokens"
 )
+
+var cursorRequiredHeaders = []string{
+	cursorDateHeader,
+	cursorKindHeader,
+	cursorModelHeader,
+	cursorInputCacheCreateHeader,
+	cursorInputOtherHeader,
+	cursorInputCacheReadHeader,
+	cursorOutputHeader,
+}
 
 // Name returns the provider name.
 func (p *Provider) Name() string {
@@ -98,34 +109,33 @@ func parseUsageCSV(path string) ([]provider.SessionInfo, error) {
 	defer f.Close()
 
 	reader := csv.NewReader(f)
-	records, err := reader.ReadAll()
+	reader.FieldsPerRecord = -1
+
+	headerRecord, err := reader.Read()
+	if err == io.EOF {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	if len(records) == 0 {
-		return nil, nil
-	}
 
-	header := headerIndex(records[0])
-	required := []string{
-		cursorDateHeader,
-		cursorKindHeader,
-		cursorModelHeader,
-		cursorInputCacheCreateHeader,
-		cursorInputOtherHeader,
-		cursorInputCacheReadHeader,
-		cursorOutputHeader,
-	}
-	for _, name := range required {
+	header := headerIndex(headerRecord)
+	for _, name := range cursorRequiredHeaders {
 		if _, ok := header[name]; !ok {
 			return nil, os.ErrInvalid
 		}
 	}
 
 	baseName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	sessions := make([]provider.SessionInfo, 0, len(records)-1)
-	for i, record := range records[1:] {
-		rowNumber := i + 1
+	var sessions []provider.SessionInfo
+	for rowNumber := 1; ; rowNumber++ {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil || !recordHasRequiredFields(header, record) {
+			continue
+		}
 		session, ok := parseUsageRecord(baseName, rowNumber, header, record)
 		if !ok {
 			continue
@@ -201,6 +211,15 @@ func parseUsageRecord(baseName string, rowNumber int, header map[string]int, rec
 			InputCacheCreate: inputCacheCreate,
 		},
 	}, true
+}
+
+func recordHasRequiredFields(header map[string]int, record []string) bool {
+	for _, name := range cursorRequiredHeaders {
+		if header[name] >= len(record) {
+			return false
+		}
+	}
+	return true
 }
 
 func parseCursorInt(value string) (int, error) {

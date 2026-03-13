@@ -151,7 +151,7 @@ TOTAL                                                                           
 
 ## 工作原理
 
-codetok 读取本地磁盘上的会话数据和手动导入的用量导出文件。每个 Provider 有独立的解析器，理解对应工具的数据格式。所有会话文件通过有界 goroutine 并行解析（默认：`min(NumCPU, 8)`，可通过 `CODETOK_WORKERS` 环境变量配置）。
+codetok 读取本地磁盘上的会话数据和手动导入的用量导出文件。每个 Provider 有独立的解析器，理解对应工具的数据格式。JSONL 会话文件通过有界 goroutine 并行解析（默认：`min(NumCPU, 8)`，可通过 `CODETOK_WORKERS` 环境变量配置）；Cursor CSV 导入文件会递归扫描并按文件顺序解析。
 
 统计口径：
 - token 用量通过聚合本地已有会话日志中的 token 计数字段得到。
@@ -169,7 +169,7 @@ codetok 读取本地磁盘上的会话数据和手动导入的用量导出文件
 - 解析 `event_msg` 事件中 `payload.type="token_count"` 的记录
 - 取最后一条累计 token 计数
 
-**Cursor** — `~/.codetok/cursor/*.csv`
+**Cursor** — `~/.codetok/cursor/**/*.csv`
 - 解析从 Cursor Dashboard 导出的 CSV 文件
 - 将 `Input (w/o Cache Write)`、`Input (w/ Cache Write)`、`Cache Read`、`Output Tokens` 映射到 `codetok` 的 token 字段
 - 每一行 CSV 视为一条本地 usage 记录，用于 session/day 视图

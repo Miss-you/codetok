@@ -109,6 +109,37 @@ func TestParseUsageCSV_SkipsMalformedRows(t *testing.T) {
 	}
 }
 
+func TestParseUsageCSV_SkipsRowsWithWrongFieldCount(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cursor.csv")
+	content := `Date,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost
+"2026-02-17T10:00:00.000Z","Included","auto","No","28342","775","105891","21282","156290","0.19"
+"2026-02-18T11:30:00.000Z","On-Demand","gpt-5-codex","No","0","8263"
+"2026-02-19T09:15:00.000Z","Included","claude-3-7-sonnet","No","12","34","56","78","180","0.02"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := parseUsageCSV(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sessions) != 2 {
+		t.Fatalf("got %d sessions, want 2", len(sessions))
+	}
+	if sessions[0].SessionID != "cursor:1" {
+		t.Fatalf("SessionID = %q, want %q", sessions[0].SessionID, "cursor:1")
+	}
+	if sessions[1].SessionID != "cursor:3" {
+		t.Fatalf("SessionID = %q, want %q", sessions[1].SessionID, "cursor:3")
+	}
+	if sessions[1].TokenUsage.Total() != 180 {
+		t.Fatalf("Total = %d, want 180", sessions[1].TokenUsage.Total())
+	}
+}
+
 func TestCollectSessions_MultipleCSVFiles(t *testing.T) {
 	baseDir := t.TempDir()
 
