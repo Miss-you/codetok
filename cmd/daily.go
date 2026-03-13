@@ -16,6 +16,7 @@ import (
 	"github.com/miss-you/codetok/provider"
 	_ "github.com/miss-you/codetok/provider/claude"
 	_ "github.com/miss-you/codetok/provider/codex"
+	_ "github.com/miss-you/codetok/provider/cursor"
 	_ "github.com/miss-you/codetok/provider/kimi"
 	"github.com/miss-you/codetok/stats"
 )
@@ -40,11 +41,12 @@ func init() {
 	dailyCmd.Flags().String("unit", defaultTokenUnit, "Token display unit for dashboard output: raw, k, m, g")
 	dailyCmd.Flags().String("group-by", defaultGroupBy, "Group by dimension for aggregation: cli, model")
 	dailyCmd.Flags().Int("top", defaultTopN, "Top N groups to show in dashboard share section")
-	dailyCmd.Flags().String("provider", "", "Filter by provider name (e.g. kimi, claude, codex)")
+	dailyCmd.Flags().String("provider", "", "Filter by provider name (e.g. kimi, claude, codex, cursor)")
 	dailyCmd.Flags().String("base-dir", "", "Override default data directory (applies to all providers)")
 	dailyCmd.Flags().String("kimi-dir", "", "Override Kimi data directory")
 	dailyCmd.Flags().String("claude-dir", "", "Override Claude Code data directory")
 	dailyCmd.Flags().String("codex-dir", "", "Override Codex CLI data directory")
+	dailyCmd.Flags().String("cursor-dir", "", "Override Cursor CSV import directory")
 	rootCmd.AddCommand(dailyCmd)
 }
 

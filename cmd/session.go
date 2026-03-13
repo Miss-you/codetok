@@ -12,6 +12,7 @@ import (
 	"github.com/miss-you/codetok/provider"
 	_ "github.com/miss-you/codetok/provider/claude"
 	_ "github.com/miss-you/codetok/provider/codex"
+	_ "github.com/miss-you/codetok/provider/cursor"
 	_ "github.com/miss-you/codetok/provider/kimi"
 	"github.com/miss-you/codetok/stats"
 )
@@ -26,11 +27,12 @@ func init() {
 	sessionCmd.Flags().Bool("json", false, "Output as JSON")
 	sessionCmd.Flags().String("since", "", "Start date filter (format: 2006-01-02)")
 	sessionCmd.Flags().String("until", "", "End date filter (format: 2006-01-02)")
-	sessionCmd.Flags().String("provider", "", "Filter by provider name (e.g. kimi, claude, codex)")
+	sessionCmd.Flags().String("provider", "", "Filter by provider name (e.g. kimi, claude, codex, cursor)")
 	sessionCmd.Flags().String("base-dir", "", "Override default data directory (applies to all providers)")
 	sessionCmd.Flags().String("kimi-dir", "", "Override Kimi data directory")
 	sessionCmd.Flags().String("claude-dir", "", "Override Claude Code data directory")
 	sessionCmd.Flags().String("codex-dir", "", "Override Codex CLI data directory")
+	sessionCmd.Flags().String("cursor-dir", "", "Override Cursor CSV import directory")
 	rootCmd.AddCommand(sessionCmd)
 }
 

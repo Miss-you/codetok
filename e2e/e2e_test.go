@@ -32,6 +32,16 @@ func claudeTestdataDir(t *testing.T) string {
 	return dir
 }
 
+// cursorTestdataDir returns the absolute path to the e2e testdata/cursor directory.
+func cursorTestdataDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.Abs(filepath.Join("testdata", "cursor"))
+	if err != nil {
+		t.Fatalf("failed to get cursor testdata dir: %v", err)
+	}
+	return dir
+}
+
 // emptyDir returns a path to an empty temp directory (to isolate providers in tests).
 func emptyDir(t *testing.T) string {
 	t.Helper()
@@ -42,7 +52,7 @@ func emptyDir(t *testing.T) string {
 func isolatedArgs(t *testing.T, extraArgs ...string) []string {
 	t.Helper()
 	empty := emptyDir(t)
-	base := []string{"--claude-dir", empty, "--codex-dir", empty}
+	base := []string{"--claude-dir", empty, "--codex-dir", empty, "--cursor-dir", empty}
 	return append(base, extraArgs...)
 }
 
@@ -348,7 +358,7 @@ func TestClaudeSubagentSessions_JSONOutput(t *testing.T) {
 	bin := buildBinary(t)
 	claudeDir := claudeTestdataDir(t)
 	empty := emptyDir(t)
-	args := []string{"--claude-dir", claudeDir, "--codex-dir", empty, "--kimi-dir", empty, "session", "--json"}
+	args := []string{"--claude-dir", claudeDir, "--codex-dir", empty, "--cursor-dir", empty, "--kimi-dir", empty, "session", "--json"}
 	output := runCodetok(t, bin, args...)
 
 	var sessions []struct {
@@ -387,7 +397,7 @@ func TestClaudeSubagentSessions_DailyOutput(t *testing.T) {
 	bin := buildBinary(t)
 	claudeDir := claudeTestdataDir(t)
 	empty := emptyDir(t)
-	args := []string{"--claude-dir", claudeDir, "--codex-dir", empty, "--kimi-dir", empty, "daily", "--json", "--all"}
+	args := []string{"--claude-dir", claudeDir, "--codex-dir", empty, "--cursor-dir", empty, "--kimi-dir", empty, "daily", "--json", "--all"}
 	output := runCodetok(t, bin, args...)
 
 	var daily []provider.DailyStats
@@ -405,5 +415,113 @@ func TestClaudeSubagentSessions_DailyOutput(t *testing.T) {
 	}
 	if daily[0].TokenUsage.Total() != 540 {
 		t.Errorf("expected 540 total tokens, got %d", daily[0].TokenUsage.Total())
+	}
+}
+
+func TestDailyCommand_JSONOutput_CursorProvider(t *testing.T) {
+	bin := buildBinary(t)
+	cursorDir := cursorTestdataDir(t)
+	empty := emptyDir(t)
+	args := []string{
+		"daily", "--json", "--all",
+		"--cursor-dir", cursorDir,
+		"--kimi-dir", empty,
+		"--claude-dir", empty,
+		"--codex-dir", empty,
+	}
+	output := runCodetok(t, bin, args...)
+
+	var daily []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+
+	if len(daily) != 2 {
+		t.Fatalf("expected 2 daily entries, got %d: %s", len(daily), output)
+	}
+
+	totalSessions := 0
+	totalTokens := 0
+	for _, day := range daily {
+		totalSessions += day.Sessions
+		totalTokens += day.TokenUsage.Total()
+		if day.ProviderName != "cursor" {
+			t.Errorf("expected provider %q, got %q", "cursor", day.ProviderName)
+		}
+		if day.GroupBy != "cli" {
+			t.Errorf("expected group_by %q, got %q", "cli", day.GroupBy)
+		}
+		if day.Group != "cursor" {
+			t.Errorf("expected cli group %q, got %q", "cursor", day.Group)
+		}
+	}
+
+	if totalSessions != 2 {
+		t.Errorf("expected 2 total sessions, got %d", totalSessions)
+	}
+	if totalTokens != 233129 {
+		t.Errorf("expected 233129 total tokens, got %d", totalTokens)
+	}
+}
+
+func TestDailyCommand_DashboardOutput_CursorProvider(t *testing.T) {
+	bin := buildBinary(t)
+	cursorDir := cursorTestdataDir(t)
+	empty := emptyDir(t)
+	args := []string{
+		"daily", "--all",
+		"--cursor-dir", cursorDir,
+		"--kimi-dir", empty,
+		"--claude-dir", empty,
+		"--codex-dir", empty,
+	}
+	output := runCodetok(t, bin, args...)
+
+	if !strings.Contains(output, "CLI Total Ranking") {
+		t.Error("dashboard output missing CLI ranking section header")
+	}
+	if !strings.Contains(output, "cursor") {
+		t.Error("dashboard output missing cursor provider group")
+	}
+}
+
+func TestSessionCommand_JSONOutput_CursorProvider(t *testing.T) {
+	bin := buildBinary(t)
+	cursorDir := cursorTestdataDir(t)
+	empty := emptyDir(t)
+	args := []string{
+		"session", "--json",
+		"--cursor-dir", cursorDir,
+		"--kimi-dir", empty,
+		"--claude-dir", empty,
+		"--codex-dir", empty,
+	}
+	output := runCodetok(t, bin, args...)
+
+	var sessions []struct {
+		SessionID    string              `json:"session_id"`
+		ProviderName string              `json:"provider"`
+		Title        string              `json:"title"`
+		Date         string              `json:"date"`
+		Turns        int                 `json:"turns"`
+		TokenUsage   provider.TokenUsage `json:"token_usage"`
+	}
+	if err := json.Unmarshal([]byte(output), &sessions); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %d", len(sessions))
+	}
+
+	ids := map[string]bool{}
+	for _, session := range sessions {
+		ids[session.SessionID] = true
+		if session.ProviderName != "cursor" {
+			t.Errorf("expected provider %q, got %q", "cursor", session.ProviderName)
+		}
+	}
+	if !ids["usage-export:1"] || !ids["usage-export:2"] {
+		t.Errorf("expected sessions usage-export:1 and usage-export:2, got %v", ids)
 	}
 }

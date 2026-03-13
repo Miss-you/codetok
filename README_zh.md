@@ -13,11 +13,11 @@
 - **Kimi CLI** — 解析 `~/.kimi/sessions/**/wire.jsonl`
 - **Claude Code** — 解析 `~/.claude/projects/**/*.jsonl`（含流式去重）
 - **Codex CLI** — 解析 `~/.codex/sessions/**/*.jsonl`
+- **Cursor** — 解析 `~/.codetok/cursor/**/*.csv` 下导入的 Cursor 用量导出文件
 
 计划支持：
 
 - OpenCode
-- Cursor
 
 ## 安装
 
@@ -83,6 +83,9 @@ codetok daily --since 2026-02-01 --until 2026-02-15
 # 按 Provider 筛选
 codetok daily --provider claude
 codetok session --provider kimi
+
+# 从自定义目录读取 Cursor 导出的 CSV
+codetok daily --all --cursor-dir ~/Downloads/cursor-usage
 ```
 
 提示：如果你改了代码后直接运行 `./bin/codetok`，请先执行 `make build` 刷新二进制。
@@ -121,6 +124,7 @@ TOTAL                 49        2965.04k 369.85k 24638.67k   0.00k         27973
 | `--kimi-dir` | 自定义 Kimi CLI 数据目录 |
 | `--claude-dir` | 自定义 Claude Code 数据目录 |
 | `--codex-dir` | 自定义 Codex CLI 数据目录 |
+| `--cursor-dir` | 自定义 Cursor CSV 导入目录 |
 
 常用组合：
 - `codetok daily` — 最近 7 天，表格单位 `k`
@@ -139,7 +143,7 @@ Date        Provider  Session                               Title               
 TOTAL                                                                                  2965044   369854  27973571
 ```
 
-参数：`--json`、`--since`、`--until`、`--provider`、`--base-dir`、`--kimi-dir`、`--claude-dir`、`--codex-dir`。
+参数：`--json`、`--since`、`--until`、`--provider`、`--base-dir`、`--kimi-dir`、`--claude-dir`、`--codex-dir`、`--cursor-dir`。
 
 ### `codetok version`
 
@@ -147,7 +151,7 @@ TOTAL                                                                           
 
 ## 工作原理
 
-codetok 读取 AI 编程 CLI 工具存储在本地磁盘的会话数据。每个 Provider 有独立的解析器，理解对应工具的数据格式。所有会话文件通过有界 goroutine 并行解析（默认：`min(NumCPU, 8)`，可通过 `CODETOK_WORKERS` 环境变量配置）。
+codetok 读取本地磁盘上的会话数据和手动导入的用量导出文件。每个 Provider 有独立的解析器，理解对应工具的数据格式。JSONL 会话文件通过有界 goroutine 并行解析（默认：`min(NumCPU, 8)`，可通过 `CODETOK_WORKERS` 环境变量配置）；Cursor CSV 导入文件会递归扫描并按文件顺序解析。
 
 统计口径：
 - token 用量通过聚合本地已有会话日志中的 token 计数字段得到。
@@ -164,6 +168,12 @@ codetok 读取 AI 编程 CLI 工具存储在本地磁盘的会话数据。每个
 **Codex CLI** — `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`
 - 解析 `event_msg` 事件中 `payload.type="token_count"` 的记录
 - 取最后一条累计 token 计数
+
+**Cursor** — `~/.codetok/cursor/**/*.csv`
+- 解析从 Cursor Dashboard 导出的 CSV 文件
+- 将 `Input (w/o Cache Write)`、`Input (w/ Cache Write)`、`Cache Read`、`Output Tokens` 映射到 `codetok` 的 token 字段
+- 每一行 CSV 视为一条本地 usage 记录，用于 session/day 视图
+- 暂不支持 Cursor Tab token 统计，因为导出数据没有提供可信的 Tab token 拆分
 
 ## 项目结构
 
@@ -182,6 +192,8 @@ codetok/
 │   │   └── parser.go       # Kimi CLI wire.jsonl 解析器
 │   ├── claude/
 │   │   └── parser.go       # Claude Code JSONL 解析器（含去重）
+│   ├── cursor/
+│   │   └── parser.go       # Cursor 用量 CSV 解析器
 │   └── codex/
 │       └── parser.go       # Codex CLI JSONL 解析器
 ├── stats/
