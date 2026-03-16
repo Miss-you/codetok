@@ -3,6 +3,7 @@ package cursor
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,7 +71,7 @@ func (r *ActivityReader) Read(dbPath string) (ActivityResult, error) {
 		if os.IsNotExist(err) || os.IsPermission(err) {
 			return result, nil
 		}
-		return result, nil
+		return result, fmt.Errorf("stat cursor activity database %q: %w", resolvedPath, err)
 	}
 
 	openDB := r.openDB
@@ -80,7 +81,7 @@ func (r *ActivityReader) Read(dbPath string) (ActivityResult, error) {
 
 	db, err := openDB(activityDriverName, resolvedPath)
 	if err != nil {
-		return result, nil
+		return result, fmt.Errorf("open cursor activity database %q: %w", resolvedPath, err)
 	}
 	defer db.Close()
 
@@ -95,7 +96,7 @@ func (r *ActivityReader) Read(dbPath string) (ActivityResult, error) {
 		if strings.Contains(err.Error(), "no such table") {
 			return result, nil
 		}
-		return result, nil
+		return result, fmt.Errorf("query cursor activity database %q: %w", resolvedPath, err)
 	}
 
 	result.HasData = result.ScoredCommits > 0

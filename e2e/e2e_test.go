@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -10,9 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
-
 	cursorapi "github.com/miss-you/codetok/cursor"
+	"github.com/miss-you/codetok/internal/testutil"
 	"github.com/miss-you/codetok/provider"
 )
 
@@ -90,72 +88,10 @@ func runCodetok(t *testing.T, binPath string, args ...string) string {
 	return stdout.String()
 }
 
-type activityFixtureRow struct {
-	composerAdded   int
-	composerDeleted int
-	tabAdded        int
-	tabDeleted      int
-}
+type activityFixtureRow = testutil.CursorActivityRow
 
 func writeCursorActivityDB(t *testing.T, rows []activityFixtureRow) string {
-	t.Helper()
-
-	dbPath := filepath.Join(t.TempDir(), "ai-code-tracking.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("sql.Open returned error: %v", err)
-	}
-	defer db.Close()
-
-	_, err = db.Exec(`
-CREATE TABLE scored_commits (
-	commitHash TEXT NOT NULL,
-	branchName TEXT NOT NULL,
-	scoredAt INTEGER NOT NULL,
-	linesAdded INTEGER,
-	linesDeleted INTEGER,
-	tabLinesAdded INTEGER,
-	tabLinesDeleted INTEGER,
-	composerLinesAdded INTEGER,
-	composerLinesDeleted INTEGER,
-	humanLinesAdded INTEGER,
-	humanLinesDeleted INTEGER,
-	blankLinesAdded INTEGER,
-	blankLinesDeleted INTEGER,
-	commitMessage TEXT,
-	commitDate TEXT,
-	v1AiPercentage TEXT,
-	v2AiPercentage TEXT,
-	PRIMARY KEY (commitHash, branchName)
-);
-`)
-	if err != nil {
-		t.Fatalf("creating scored_commits table: %v", err)
-	}
-
-	for i, row := range rows {
-		_, err := db.Exec(`
-INSERT INTO scored_commits (
-	commitHash, branchName, scoredAt, linesAdded, linesDeleted,
-	tabLinesAdded, tabLinesDeleted, composerLinesAdded, composerLinesDeleted
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`,
-			"commit-"+string(rune('a'+i)),
-			"main",
-			1000+i,
-			row.composerAdded+row.tabAdded,
-			row.composerDeleted+row.tabDeleted,
-			row.tabAdded,
-			row.tabDeleted,
-			row.composerAdded,
-			row.composerDeleted,
-		)
-		if err != nil {
-			t.Fatalf("inserting fixture row %d: %v", i, err)
-		}
-	}
-
-	return dbPath
+	return testutil.WriteCursorActivityDB(t, rows)
 }
 
 func TestDailyCommand_JSONOutput_DefaultGroupByCLI(t *testing.T) {
@@ -201,7 +137,7 @@ func TestDailyCommand_JSONOutput_DefaultGroupByCLI(t *testing.T) {
 func TestCursorActivityCommand_JSONOutput(t *testing.T) {
 	bin := buildBinary(t)
 	dbPath := writeCursorActivityDB(t, []activityFixtureRow{
-		{composerAdded: 9, composerDeleted: 2, tabAdded: 4, tabDeleted: 1},
+		{ComposerAdded: 9, ComposerDeleted: 2, TabAdded: 4, TabDeleted: 1},
 	})
 
 	output := runCodetok(t, bin, "cursor", "activity", "--json", "--db-path", dbPath)
@@ -229,7 +165,7 @@ func TestCursorActivityDoesNotPolluteDailyJSONTokenFields(t *testing.T) {
 	bin := buildBinary(t)
 	cursorDir := cursorTestdataDir(t)
 	dbPath := writeCursorActivityDB(t, []activityFixtureRow{
-		{composerAdded: 12, composerDeleted: 3, tabAdded: 6, tabDeleted: 1},
+		{ComposerAdded: 12, ComposerDeleted: 3, TabAdded: 6, TabDeleted: 1},
 	})
 
 	activityOutput := runCodetok(t, bin, "cursor", "activity", "--json", "--db-path", dbPath)
@@ -277,7 +213,7 @@ func TestCursorActivityDoesNotPolluteSessionJSONTokenFields(t *testing.T) {
 	bin := buildBinary(t)
 	cursorDir := cursorTestdataDir(t)
 	dbPath := writeCursorActivityDB(t, []activityFixtureRow{
-		{composerAdded: 7, composerDeleted: 2, tabAdded: 5, tabDeleted: 1},
+		{ComposerAdded: 7, ComposerDeleted: 2, TabAdded: 5, TabDeleted: 1},
 	})
 
 	activityOutput := runCodetok(t, bin, "cursor", "activity", "--json", "--db-path", dbPath)
