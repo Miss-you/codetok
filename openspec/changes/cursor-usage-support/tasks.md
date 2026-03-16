@@ -22,14 +22,14 @@
 
 ## 4. Cursor 活动归因能力
 
-- [ ] 4.1 设计并实现读取 `~/.cursor/ai-tracking/ai-code-tracking.db` 的独立 activity reader
-- [ ] 4.2 新增独立的 Cursor activity 输出模型或子命令，分别暴露 `composer` 与 `tab` 指标
-- [ ] 4.3 确保 activity attribution 不进入 `provider.TokenUsage`、`daily` 或 `session` 的 token 汇总路径
-- [ ] 4.4 为 activity attribution 补充 SQLite fixture 测试，覆盖数据库存在、缺失、单类别和双类别数据场景
+- [x] 4.1 设计并实现读取 `~/.cursor/ai-tracking/ai-code-tracking.db` 的独立 activity reader
+- [x] 4.2 新增独立的 Cursor activity 输出模型或子命令，分别暴露 `composer` 与 `tab` 指标
+- [x] 4.3 确保 activity attribution 不进入 `provider.TokenUsage`、`daily` 或 `session` 的 token 汇总路径
+- [x] 4.4 为 activity attribution 补充 SQLite fixture 测试，覆盖数据库存在、缺失、单类别和双类别数据场景
 
 ## 5. 验收与回归验证
 
-- [ ] 5.1 运行格式化、静态检查和全量测试，确认 Cursor 新能力未破坏现有 provider 行为
+- [x] 5.1 运行格式化、静态检查和全量测试，确认 Cursor 新能力未破坏现有 provider 行为
 - [ ] 5.2 补充一组端到端验收用例，覆盖“手工导入-only”“sync-only”“导入+sync 共存”“sync 失败但本地缓存仍可用”四类主路径
 - [ ] 5.3 补充一组产品边界验收用例，确认 `daily` / `session` 不会隐式访问远程 Cursor API
-- [ ] 5.4 补充 activity attribution 边界验收用例，确认其输出不会污染 token 报表或 JSON token 字段
+- [x] 5.4 补充 activity attribution 边界验收用例，确认其输出不会污染 token 报表或 JSON token 字段

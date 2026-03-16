@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -15,6 +17,7 @@ import (
 type cursorCommandService interface {
 	Login(context.Context, string) (cursorapi.ValidationResult, error)
 	Status(context.Context) (cursorapi.StatusResult, error)
+	Activity(context.Context, string) (cursorapi.ActivityResult, error)
 	Sync(context.Context) (cursorapi.SyncResult, error)
 	Logout() error
 }
@@ -43,6 +46,7 @@ Daily and session reporting remain local-file based.`,
 	cmd.AddCommand(
 		newCursorLoginCommand(service),
 		newCursorStatusCommand(service),
+		newCursorActivityCommand(service),
 		newCursorSyncCommand(service),
 		newCursorLogoutCommand(service),
 	)
@@ -117,6 +121,37 @@ func newCursorStatusCommand(service cursorCommandService) *cobra.Command {
 	}
 }
 
+func newCursorActivityCommand(service cursorCommandService) *cobra.Command {
+	var (
+		jsonOutput bool
+		dbPath     string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "activity",
+		Short: "Show Cursor activity attribution from the local tracking database",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := service.Activity(cmd.Context(), dbPath)
+			if err != nil {
+				return err
+			}
+
+			if jsonOutput {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(result)
+			}
+
+			printCursorActivity(result)
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output Cursor activity attribution as JSON")
+	cmd.Flags().StringVar(&dbPath, "db-path", "", "Override Cursor tracking database path")
+	return cmd
+}
+
 func newCursorSyncCommand(service cursorCommandService) *cobra.Command {
 	return &cobra.Command{
 		Use:   "sync",
@@ -176,4 +211,24 @@ func resolveCursorToken(cmd *cobra.Command, flagValue string) (string, error) {
 	}
 
 	return "", fmt.Errorf("provide a Cursor session token with --token or via stdin")
+}
+
+func printCursorActivity(result cursorapi.ActivityResult) {
+	fmt.Println("Cursor Activity Attribution")
+	if result.DBPath != "" {
+		fmt.Printf("Database: %s\n", result.DBPath)
+	}
+
+	if !result.HasData {
+		fmt.Println("No Cursor activity attribution data found.")
+		return
+	}
+
+	fmt.Printf("Scored commits: %d\n\n", result.ScoredCommits)
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "Source\tLines Added\tLines Deleted")
+	fmt.Fprintf(w, "composer\t%d\t%d\n", result.Composer.LinesAdded, result.Composer.LinesDeleted)
+	fmt.Fprintf(w, "tab\t%d\t%d\n", result.Tab.LinesAdded, result.Tab.LinesDeleted)
+	w.Flush()
 }

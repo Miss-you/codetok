@@ -9,16 +9,19 @@ import (
 )
 
 type stubCursorCommandService struct {
-	loginResult  cursorapi.ValidationResult
-	loginErr     error
-	statusResult cursorapi.StatusResult
-	statusErr    error
-	syncResult   cursorapi.SyncResult
-	syncErr      error
-	logoutErr    error
+	loginResult    cursorapi.ValidationResult
+	loginErr       error
+	statusResult   cursorapi.StatusResult
+	statusErr      error
+	activityResult cursorapi.ActivityResult
+	activityErr    error
+	syncResult     cursorapi.SyncResult
+	syncErr        error
+	logoutErr      error
 
-	loginToken string
-	logoutDone bool
+	loginToken     string
+	activityDBPath string
+	logoutDone     bool
 }
 
 func (s *stubCursorCommandService) Login(_ context.Context, token string) (cursorapi.ValidationResult, error) {
@@ -28,6 +31,11 @@ func (s *stubCursorCommandService) Login(_ context.Context, token string) (curso
 
 func (s *stubCursorCommandService) Status(context.Context) (cursorapi.StatusResult, error) {
 	return s.statusResult, s.statusErr
+}
+
+func (s *stubCursorCommandService) Activity(_ context.Context, dbPath string) (cursorapi.ActivityResult, error) {
+	s.activityDBPath = dbPath
+	return s.activityResult, s.activityErr
 }
 
 func (s *stubCursorCommandService) Sync(context.Context) (cursorapi.SyncResult, error) {
@@ -47,7 +55,7 @@ func TestNewCursorCommand_IncludesLifecycleSubcommands(t *testing.T) {
 		got[child.Name()] = true
 	}
 
-	for _, name := range []string{"login", "status", "sync", "logout"} {
+	for _, name := range []string{"login", "status", "activity", "sync", "logout"} {
 		if !got[name] {
 			t.Fatalf("expected subcommand %q to be registered", name)
 		}
@@ -125,6 +133,66 @@ func TestCursorSyncCommand_PrintsSyncedPath(t *testing.T) {
 
 	if !strings.Contains(output, "/tmp/cursor/synced/usage.csv") {
 		t.Fatalf("sync output = %q, want synced path", output)
+	}
+}
+
+func TestCursorActivityCommand_UsesDBPathOverrideAndPrintsJSON(t *testing.T) {
+	svc := &stubCursorCommandService{
+		activityResult: cursorapi.ActivityResult{
+			DBPath:        "/tmp/cursor/ai-code-tracking.db",
+			HasData:       true,
+			ScoredCommits: 2,
+			Composer:      cursorapi.ActivityMetric{LinesAdded: 9, LinesDeleted: 3},
+			Tab:           cursorapi.ActivityMetric{LinesAdded: 4, LinesDeleted: 1},
+		},
+	}
+	cmd := newCursorCommand(svc)
+	cmd.SetArgs([]string{"activity", "--json", "--db-path", "/tmp/cursor/ai-code-tracking.db"})
+
+	output := captureStdout(t, func() {
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("activity command failed: %v", err)
+		}
+	})
+
+	if svc.activityDBPath != "/tmp/cursor/ai-code-tracking.db" {
+		t.Fatalf("activity db path = %q, want /tmp/cursor/ai-code-tracking.db", svc.activityDBPath)
+	}
+	if !strings.Contains(output, "\"composer\"") || !strings.Contains(output, "\"tab\"") {
+		t.Fatalf("activity json output = %q, want composer/tab fields", output)
+	}
+	if strings.Contains(strings.ToLower(output), "token") {
+		t.Fatalf("activity json output should not use token wording: %q", output)
+	}
+}
+
+func TestCursorActivityCommand_TableOutputUsesAttributionLabels(t *testing.T) {
+	svc := &stubCursorCommandService{
+		activityResult: cursorapi.ActivityResult{
+			DBPath:        "/tmp/cursor/ai-code-tracking.db",
+			HasData:       true,
+			ScoredCommits: 1,
+			Composer:      cursorapi.ActivityMetric{LinesAdded: 8, LinesDeleted: 2},
+			Tab:           cursorapi.ActivityMetric{LinesAdded: 0, LinesDeleted: 0},
+		},
+	}
+	cmd := newCursorCommand(svc)
+	cmd.SetArgs([]string{"activity"})
+
+	output := captureStdout(t, func() {
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("activity command failed: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Cursor Activity Attribution") {
+		t.Fatalf("activity output = %q, want attribution heading", output)
+	}
+	if !strings.Contains(output, "composer") || !strings.Contains(output, "tab") {
+		t.Fatalf("activity output = %q, want composer/tab rows", output)
+	}
+	if strings.Contains(strings.ToLower(output), "token") {
+		t.Fatalf("activity output should not use token wording: %q", output)
 	}
 }
 
