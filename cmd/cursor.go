@@ -7,8 +7,9 @@ import (
 	"os"
 	"strings"
 
-	cursorapi "github.com/miss-you/codetok/cursor"
 	"github.com/spf13/cobra"
+
+	cursorapi "github.com/miss-you/codetok/cursor"
 )
 
 type cursorCommandService interface {
