@@ -10,9 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	_ "modernc.org/sqlite"
+
 	cursorapi "github.com/miss-you/codetok/cursor"
 	"github.com/miss-you/codetok/provider"
-	_ "modernc.org/sqlite"
 )
 
 // testdataDir returns the absolute path to the e2e testdata/sessions directory.
