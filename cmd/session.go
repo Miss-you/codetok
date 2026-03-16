@@ -20,7 +20,12 @@ import (
 var sessionCmd = &cobra.Command{
 	Use:   "session",
 	Short: "Show per-session token usage",
-	RunE:  runSession,
+	Long: `Show per-session token usage.
+
+Reporting commands read only local session files and Cursor CSV exports already on disk. They never trigger implicit Cursor login or sync.
+
+By default Cursor reporting scans legacy CSV files in ~/.codetok/cursor/ plus imports/ and synced/ subdirectories. Use --cursor-dir to scan only a custom local directory.`,
+	RunE: runSession,
 }
 
 func init() {

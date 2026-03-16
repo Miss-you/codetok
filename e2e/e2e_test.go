@@ -647,6 +647,22 @@ func TestSessionCommand_JSONOutput_CursorDefaultRootSyncOnly(t *testing.T) {
 	}
 }
 
+func TestDailyCommand_JSONOutput_CursorDefaultRootEmpty(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+
+	output := runCodetokWithEnv(t, bin, cursorEnv(home), defaultCursorArgs(t, "daily", "--json", "--all", "--provider", "cursor")...)
+
+	var daily []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+
+	if len(daily) != 0 {
+		t.Fatalf("expected 0 daily entries for empty Cursor root, got %d: %s", len(daily), output)
+	}
+}
+
 func TestDailyCommand_JSONOutput_CursorDefaultRootMergesImportSyncAndLegacy(t *testing.T) {
 	bin := buildBinary(t)
 	home := t.TempDir()

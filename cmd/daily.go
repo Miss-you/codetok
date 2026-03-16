@@ -24,7 +24,12 @@ import (
 var dailyCmd = &cobra.Command{
 	Use:   "daily",
 	Short: "Show daily token usage breakdown",
-	RunE:  runDaily,
+	Long: `Show daily token usage breakdown.
+
+Reporting commands read only local session files and Cursor CSV exports already on disk. They never trigger implicit Cursor login or sync.
+
+By default Cursor reporting scans legacy CSV files in ~/.codetok/cursor/ plus imports/ and synced/ subdirectories. Use --cursor-dir to scan only a custom local directory.`,
+	RunE: runDaily,
 }
 
 const defaultDailyDays = 7
