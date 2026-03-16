@@ -140,6 +140,114 @@ func TestParseUsageCSV_SkipsRowsWithWrongFieldCount(t *testing.T) {
 	}
 }
 
+func TestParseUsageCSV_LegacyExportWithoutKindColumn(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.csv")
+	content := `Date,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost
+"2026-02-20T08:45:00Z","gpt-4.1","123","456","789","10","999999","12.34"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := parseUsageCSV(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(sessions))
+	}
+
+	session := sessions[0]
+	if session.SessionID != "legacy:1" {
+		t.Fatalf("SessionID = %q, want %q", session.SessionID, "legacy:1")
+	}
+	if session.Title != "gpt-4.1" {
+		t.Fatalf("Title = %q, want %q", session.Title, "gpt-4.1")
+	}
+	if session.TokenUsage.InputCacheCreate != 123 {
+		t.Fatalf("InputCacheCreate = %d, want 123", session.TokenUsage.InputCacheCreate)
+	}
+	if session.TokenUsage.InputOther != 456 {
+		t.Fatalf("InputOther = %d, want 456", session.TokenUsage.InputOther)
+	}
+	if session.TokenUsage.InputCacheRead != 789 {
+		t.Fatalf("InputCacheRead = %d, want 789", session.TokenUsage.InputCacheRead)
+	}
+	if session.TokenUsage.Output != 10 {
+		t.Fatalf("Output = %d, want 10", session.TokenUsage.Output)
+	}
+	if session.TokenUsage.Total() != 1378 {
+		t.Fatalf("Total = %d, want 1378", session.TokenUsage.Total())
+	}
+}
+
+func TestParseUsageCSV_BlankTokenCellsMapToZeroWithoutUsingTotalTokens(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "blank-tokens.csv")
+	content := `Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost
+"2026-02-21T09:15:00Z","Included","claude-3-7-sonnet","","34","","56","999999","88.88"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := parseUsageCSV(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(sessions))
+	}
+
+	usage := sessions[0].TokenUsage
+	if usage.InputCacheCreate != 0 {
+		t.Fatalf("InputCacheCreate = %d, want 0", usage.InputCacheCreate)
+	}
+	if usage.InputOther != 34 {
+		t.Fatalf("InputOther = %d, want 34", usage.InputOther)
+	}
+	if usage.InputCacheRead != 0 {
+		t.Fatalf("InputCacheRead = %d, want 0", usage.InputCacheRead)
+	}
+	if usage.Output != 56 {
+		t.Fatalf("Output = %d, want 56", usage.Output)
+	}
+	if usage.Total() != 90 {
+		t.Fatalf("Total = %d, want 90", usage.Total())
+	}
+}
+
+func TestParseUsageCSV_AcceptsRFC3339TimestampVariants(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "time-formats.csv")
+	content := `Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens
+"2026-02-20T08:45:00Z","Included","auto","1","2","3","4"
+"2026-02-20T08:45:00+08:00","Included","gpt-5-codex","5","6","7","8"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := parseUsageCSV(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sessions) != 2 {
+		t.Fatalf("got %d sessions, want 2", len(sessions))
+	}
+
+	if got, want := sessions[0].StartTime.Format(time.RFC3339), "2026-02-20T08:45:00Z"; got != want {
+		t.Fatalf("first StartTime = %q, want %q", got, want)
+	}
+	if got, want := sessions[1].StartTime.Format(time.RFC3339), "2026-02-20T08:45:00+08:00"; got != want {
+		t.Fatalf("second StartTime = %q, want %q", got, want)
+	}
+}
+
 func TestCollectSessions_MultipleCSVFiles(t *testing.T) {
 	baseDir := t.TempDir()
 
@@ -171,6 +279,49 @@ func TestCollectSessions_MultipleCSVFiles(t *testing.T) {
 	for _, session := range sessions {
 		if session.ProviderName != "cursor" {
 			t.Fatalf("ProviderName = %q, want %q", session.ProviderName, "cursor")
+		}
+	}
+}
+
+func TestCollectSessions_SkipsInvalidCSVFileAndKeepsDeterministicOrder(t *testing.T) {
+	baseDir := t.TempDir()
+
+	invalid := `Date,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read
+"2026-02-17T10:00:00Z","broken","1","2","3"
+`
+	first := `Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens
+"2026-02-21T09:15:00Z","Included","model-b","1","2","3","4"
+`
+	second := `Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens
+"2026-02-20T09:15:00Z","Included","model-a","5","6","7","8"
+"2026-02-21T09:15:00Z","Included","model-c","9","10","11","12"
+`
+
+	if err := os.WriteFile(filepath.Join(baseDir, "zzz-invalid.csv"), []byte(invalid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "bbb.csv"), []byte(first), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "aaa.csv"), []byte(second), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Provider{}
+	sessions, err := p.CollectSessions(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sessions) != 3 {
+		t.Fatalf("got %d sessions, want 3", len(sessions))
+	}
+
+	gotIDs := []string{sessions[0].SessionID, sessions[1].SessionID, sessions[2].SessionID}
+	wantIDs := []string{"aaa:1", "aaa:2", "bbb:1"}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Fatalf("sessionIDs[%d] = %q, want %q", i, gotIDs[i], wantIDs[i])
 		}
 	}
 }
