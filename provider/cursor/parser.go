@@ -32,7 +32,6 @@ const (
 
 var cursorRequiredHeaders = []string{
 	cursorDateHeader,
-	cursorKindHeader,
 	cursorModelHeader,
 	cursorInputCacheCreateHeader,
 	cursorInputOtherHeader,
