@@ -5,10 +5,18 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
 var ErrNoCredentials = errors.New("cursor credentials not found")
+
+var (
+	userHomeDir                   = os.UserHomeDir
+	renameFile                    = os.Rename
+	removeFile                    = os.Remove
+	renameNeedsDestinationRemoval = runtime.GOOS == "windows"
+)
 
 // Credentials stores the active Cursor session token saved by codetok.
 type Credentials struct {
@@ -33,7 +41,7 @@ func NewStore(rootDir string) Store {
 
 // DefaultRootDir returns the default codetok-owned Cursor storage root.
 func DefaultRootDir() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := userHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -41,15 +49,13 @@ func DefaultRootDir() (string, error) {
 }
 
 // CredentialsPath returns the path to the saved credential file.
-func (s Store) CredentialsPath() string {
-	path, _ := s.credentialsPath()
-	return path
+func (s Store) CredentialsPath() (string, error) {
+	return s.credentialsPath()
 }
 
 // SyncedCSVPath returns the path to the tool-owned synced CSV cache file.
-func (s Store) SyncedCSVPath() string {
-	path, _ := s.syncedCSVPath()
-	return path
+func (s Store) SyncedCSVPath() (string, error) {
+	return s.syncedCSVPath()
 }
 
 func (s Store) credentialsPath() (string, error) {
@@ -186,8 +192,25 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) (err error) {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := replaceFile(tmpPath, path); err != nil {
 		return err
 	}
 	return nil
+}
+
+func replaceFile(srcPath, dstPath string) error {
+	if err := renameFile(srcPath, dstPath); err == nil {
+		return nil
+	} else {
+		if !renameNeedsDestinationRemoval {
+			return err
+		}
+		if _, statErr := os.Stat(dstPath); statErr != nil {
+			return err
+		}
+		if removeErr := removeFile(dstPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			return removeErr
+		}
+		return renameFile(srcPath, dstPath)
+	}
 }

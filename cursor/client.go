@@ -106,7 +106,9 @@ func (c *Client) FetchUsageCSV(ctx context.Context, token string) ([]byte, error
 	if err != nil {
 		return nil, fmt.Errorf("read usage CSV: %w", err)
 	}
-	if !bytes.HasPrefix(bytes.TrimSpace(data), []byte("Date,")) {
+	trimmed := bytes.TrimSpace(data)
+	trimmed = bytes.TrimPrefix(trimmed, []byte("\xef\xbb\xbf"))
+	if !bytes.HasPrefix(trimmed, []byte("Date,")) {
 		return nil, fmt.Errorf("invalid response from Cursor API: expected CSV data")
 	}
 	return data, nil

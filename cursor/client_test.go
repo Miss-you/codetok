@@ -84,6 +84,23 @@ func TestClientFetchUsageCSV_Success(t *testing.T) {
 	}
 }
 
+func TestClientFetchUsageCSV_AcceptsUTF8BOM(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/csv")
+		_, _ = w.Write([]byte("\ufeffDate,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens\n"))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, server.Client())
+	csv, err := client.FetchUsageCSV(context.Background(), "token-123")
+	if err != nil {
+		t.Fatalf("FetchUsageCSV returned error: %v", err)
+	}
+	if !strings.Contains(string(csv), "Date,Model") {
+		t.Fatalf("csv = %q, want CSV header with Date column", string(csv))
+	}
+}
+
 func TestClientFetchUsageCSV_RejectsInvalidResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

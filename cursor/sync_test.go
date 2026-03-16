@@ -21,8 +21,12 @@ func TestServiceSyncWritesCSVToLocalCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sync returned error: %v", err)
 	}
-	if result.Path != store.SyncedCSVPath() {
-		t.Fatalf("Path = %q, want %q", result.Path, store.SyncedCSVPath())
+	wantPath, err := store.SyncedCSVPath()
+	if err != nil {
+		t.Fatalf("SyncedCSVPath returned error: %v", err)
+	}
+	if result.Path != wantPath {
+		t.Fatalf("Path = %q, want %q", result.Path, wantPath)
 	}
 
 	got, err := os.ReadFile(result.Path)
@@ -51,7 +55,11 @@ func TestServiceSyncPreservesExistingCacheOnFailure(t *testing.T) {
 		t.Fatal("expected Sync to fail")
 	}
 
-	got, err := os.ReadFile(store.SyncedCSVPath())
+	path, err := store.SyncedCSVPath()
+	if err != nil {
+		t.Fatalf("SyncedCSVPath returned error: %v", err)
+	}
+	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
 	}
