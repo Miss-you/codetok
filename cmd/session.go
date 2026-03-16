@@ -32,7 +32,7 @@ func init() {
 	sessionCmd.Flags().String("kimi-dir", "", "Override Kimi data directory")
 	sessionCmd.Flags().String("claude-dir", "", "Override Claude Code data directory")
 	sessionCmd.Flags().String("codex-dir", "", "Override Codex CLI data directory")
-	sessionCmd.Flags().String("cursor-dir", "", "Override Cursor CSV import directory")
+	sessionCmd.Flags().String("cursor-dir", "", "Override Cursor CSV directory; scans only this local path and skips default Cursor imports/synced roots")
 	rootCmd.AddCommand(sessionCmd)
 }
 
@@ -50,29 +50,11 @@ func runSession(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	sinceStr, _ := cmd.Flags().GetString("since")
 	untilStr, _ := cmd.Flags().GetString("until")
-	providerFilter, _ := cmd.Flags().GetString("provider")
-	baseDir, _ := cmd.Flags().GetString("base-dir")
-
-	providers := provider.FilterProviders(provider.Registry(), providerFilter)
-
-	var allSessions []provider.SessionInfo
-	for _, p := range providers {
-		dir := baseDir
-		if providerDir, _ := cmd.Flags().GetString(providerDirFlag(p.Name())); providerDir != "" {
-			dir = providerDir
-		}
-		sessions, err := p.CollectSessions(dir)
-		if err != nil {
-			// Skip providers whose data directory doesn't exist
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("collecting sessions from %s: %w", p.Name(), err)
-		}
-		allSessions = append(allSessions, sessions...)
+	allSessions, err := collectSessions(cmd)
+	if err != nil {
+		return err
 	}
 
-	var err error
 	var since, until time.Time
 	if sinceStr != "" {
 		since, err = time.Parse("2006-01-02", sinceStr)
