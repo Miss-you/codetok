@@ -107,6 +107,7 @@ func (c *Client) FetchUsageCSV(ctx context.Context, token string) ([]byte, error
 		return nil, fmt.Errorf("read usage CSV: %w", err)
 	}
 	trimmed := bytes.TrimSpace(data)
+	// Cursor may prepend a UTF-8 BOM to CSV downloads.
 	trimmed = bytes.TrimPrefix(trimmed, []byte("\xef\xbb\xbf"))
 	if !bytes.HasPrefix(trimmed, []byte("Date,")) {
 		return nil, fmt.Errorf("invalid response from Cursor API: expected CSV data")

@@ -15,6 +15,8 @@ var (
 	userHomeDir                   = os.UserHomeDir
 	renameFile                    = os.Rename
 	removeFile                    = os.Remove
+	// Windows rename cannot replace an existing destination atomically, so we
+	// remove the destination first before retrying the rename.
 	renameNeedsDestinationRemoval = runtime.GOOS == "windows"
 )
 
@@ -199,18 +201,19 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) (err error) {
 }
 
 func replaceFile(srcPath, dstPath string) error {
-	if err := renameFile(srcPath, dstPath); err == nil {
+	err := renameFile(srcPath, dstPath)
+	if err == nil {
 		return nil
-	} else {
-		if !renameNeedsDestinationRemoval {
-			return err
-		}
-		if _, statErr := os.Stat(dstPath); statErr != nil {
-			return err
-		}
-		if removeErr := removeFile(dstPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			return removeErr
-		}
-		return renameFile(srcPath, dstPath)
 	}
+
+	if !renameNeedsDestinationRemoval {
+		return err
+	}
+	if _, statErr := os.Stat(dstPath); statErr != nil {
+		return err
+	}
+	if removeErr := removeFile(dstPath); removeErr != nil && !os.IsNotExist(removeErr) {
+		return removeErr
+	}
+	return renameFile(srcPath, dstPath)
 }
