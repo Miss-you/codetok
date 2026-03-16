@@ -325,3 +325,30 @@ func TestCollectSessions_SkipsInvalidCSVFileAndKeepsDeterministicOrder(t *testin
 		}
 	}
 }
+
+func TestCollectSessions_FindsSyncedCSVInNestedDirectory(t *testing.T) {
+	baseDir := t.TempDir()
+	syncedDir := filepath.Join(baseDir, "synced")
+	if err := os.MkdirAll(syncedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	content := `Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens
+"2026-03-15T09:15:00Z","Included","cursor-auto","1","2","3","4"
+`
+	if err := os.WriteFile(filepath.Join(syncedDir, "usage.csv"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Provider{}
+	sessions, err := p.CollectSessions(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(sessions))
+	}
+	if sessions[0].SessionID != "usage:1" {
+		t.Fatalf("SessionID = %q, want %q", sessions[0].SessionID, "usage:1")
+	}
+}
