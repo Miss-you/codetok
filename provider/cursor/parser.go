@@ -47,31 +47,10 @@ func (p *Provider) Name() string {
 // CollectSessions scans baseDir for Cursor usage export CSV files and returns one
 // session-like record per CSV row.
 func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, error) {
-	if baseDir == "" {
-		var err error
-		baseDir, err = defaultCursorDir()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var paths []string
-	if err := filepath.WalkDir(baseDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if strings.EqualFold(filepath.Ext(d.Name()), ".csv") {
-			paths = append(paths, path)
-		}
-		return nil
-	}); err != nil {
+	paths, err := resolveCursorCSVPaths(baseDir)
+	if err != nil {
 		return nil, err
 	}
-
-	sort.Strings(paths)
 
 	var sessions []provider.SessionInfo
 	for _, path := range paths {
@@ -98,6 +77,76 @@ func defaultCursorDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".codetok", "cursor"), nil
+}
+
+func resolveCursorCSVPaths(baseDir string) ([]string, error) {
+	if baseDir != "" {
+		return collectCSVPathsRecursive(baseDir)
+	}
+
+	root, err := defaultCursorDir()
+	if err != nil {
+		return nil, err
+	}
+
+	return collectDefaultCursorCSVPaths(root)
+}
+
+func collectDefaultCursorCSVPaths(root string) ([]string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+
+	var paths []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.EqualFold(filepath.Ext(entry.Name()), ".csv") {
+			paths = append(paths, filepath.Join(root, entry.Name()))
+		}
+	}
+
+	for _, subdir := range []string{"imports", "synced"} {
+		nested, err := collectCSVPathsRecursiveIfExists(filepath.Join(root, subdir))
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, nested...)
+	}
+
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func collectCSVPathsRecursiveIfExists(baseDir string) ([]string, error) {
+	paths, err := collectCSVPathsRecursive(baseDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return paths, err
+}
+
+func collectCSVPathsRecursive(baseDir string) ([]string, error) {
+	var paths []string
+	if err := filepath.WalkDir(baseDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(d.Name()), ".csv") {
+			paths = append(paths, path)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	sort.Strings(paths)
+	return paths, nil
 }
 
 func parseUsageCSV(path string) ([]provider.SessionInfo, error) {

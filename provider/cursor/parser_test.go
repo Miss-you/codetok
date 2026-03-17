@@ -326,6 +326,94 @@ func TestCollectSessions_SkipsInvalidCSVFileAndKeepsDeterministicOrder(t *testin
 	}
 }
 
+func TestCollectSessions_DefaultRootMergesLegacyImportsAndSyncedOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	root := filepath.Join(home, ".codetok", "cursor")
+	writeCursorCSVFixture(t, filepath.Join(root, "legacy.csv"),
+		`"2026-02-17T10:00:00Z","Included","legacy-model","1","2","3","4"`,
+	)
+	writeCursorCSVFixture(t, filepath.Join(root, "imports", "manual.csv"),
+		`"2026-02-18T10:00:00Z","Included","manual-model","5","6","7","8"`,
+	)
+	writeCursorCSVFixture(t, filepath.Join(root, "synced", "cached.csv"),
+		`"2026-02-19T10:00:00Z","Included","synced-model","9","10","11","12"`,
+	)
+	writeCursorCSVFixture(t, filepath.Join(root, "archive", "ignored.csv"),
+		`"2026-02-20T10:00:00Z","Included","archived-model","13","14","15","16"`,
+	)
+
+	p := &Provider{}
+	sessions, err := p.CollectSessions("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sessions) != 3 {
+		t.Fatalf("got %d sessions, want 3", len(sessions))
+	}
+
+	gotIDs := []string{sessions[0].SessionID, sessions[1].SessionID, sessions[2].SessionID}
+	wantIDs := []string{"legacy:1", "manual:1", "cached:1"}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Fatalf("sessionIDs[%d] = %q, want %q", i, gotIDs[i], wantIDs[i])
+		}
+	}
+}
+
+func TestCollectSessions_DefaultRootAllowsSingleSource(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	root := filepath.Join(home, ".codetok", "cursor")
+	writeCursorCSVFixture(t, filepath.Join(root, "synced", "cached.csv"),
+		`"2026-02-19T10:00:00Z","Included","synced-model","9","10","11","12"`,
+	)
+
+	p := &Provider{}
+	sessions, err := p.CollectSessions("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(sessions))
+	}
+	if sessions[0].SessionID != "cached:1" {
+		t.Fatalf("SessionID = %q, want %q", sessions[0].SessionID, "cached:1")
+	}
+}
+
+func TestCollectSessions_ExplicitDirUsesOnlyProvidedDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	defaultRoot := filepath.Join(home, ".codetok", "cursor")
+	writeCursorCSVFixture(t, filepath.Join(defaultRoot, "imports", "default.csv"),
+		`"2026-02-17T10:00:00Z","Included","default-model","1","2","3","4"`,
+	)
+
+	explicitDir := t.TempDir()
+	writeCursorCSVFixture(t, filepath.Join(explicitDir, "custom.csv"),
+		`"2026-02-21T10:00:00Z","Included","custom-model","5","6","7","8"`,
+	)
+
+	p := &Provider{}
+	sessions, err := p.CollectSessions(explicitDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(sessions))
+	}
+	if sessions[0].SessionID != "custom:1" {
+		t.Fatalf("SessionID = %q, want %q", sessions[0].SessionID, "custom:1")
+	}
+}
+
 func TestCollectSessions_FindsSyncedCSVInNestedDirectory(t *testing.T) {
 	baseDir := t.TempDir()
 	syncedDir := filepath.Join(baseDir, "synced")
@@ -350,5 +438,24 @@ func TestCollectSessions_FindsSyncedCSVInNestedDirectory(t *testing.T) {
 	}
 	if sessions[0].SessionID != "usage:1" {
 		t.Fatalf("SessionID = %q, want %q", sessions[0].SessionID, "usage:1")
+	}
+}
+
+func writeCursorCSVFixture(t *testing.T, path string, rows ...string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("creating parent directory: %v", err)
+	}
+
+	content := "Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens\n" +
+		rows[0]
+	for _, row := range rows[1:] {
+		content += "\n" + row
+	}
+	content += "\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing csv fixture: %v", err)
 	}
 }
