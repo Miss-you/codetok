@@ -24,7 +24,12 @@ import (
 var dailyCmd = &cobra.Command{
 	Use:   "daily",
 	Short: "Show daily token usage breakdown",
-	RunE:  runDaily,
+	Long: `Show daily token usage breakdown.
+
+Reporting commands read only local session files and Cursor CSV exports already on disk. They never trigger implicit Cursor login or sync.
+
+By default Cursor reporting scans legacy CSV files in ~/.codetok/cursor/ plus imports/ and synced/ subdirectories. Use --cursor-dir to scan only a custom local directory.`,
+	RunE: runDaily,
 }
 
 const defaultDailyDays = 7
@@ -46,7 +51,7 @@ func init() {
 	dailyCmd.Flags().String("kimi-dir", "", "Override Kimi data directory")
 	dailyCmd.Flags().String("claude-dir", "", "Override Claude Code data directory")
 	dailyCmd.Flags().String("codex-dir", "", "Override Codex CLI data directory")
-	dailyCmd.Flags().String("cursor-dir", "", "Override Cursor CSV import directory")
+	dailyCmd.Flags().String("cursor-dir", "", "Override Cursor CSV directory; scans only this local path and skips default Cursor imports/synced roots")
 	rootCmd.AddCommand(dailyCmd)
 }
 
@@ -64,9 +69,6 @@ func runDaily(cmd *cobra.Command, args []string) error {
 	unitStr, _ := cmd.Flags().GetString("unit")
 	groupByStr, _ := cmd.Flags().GetString("group-by")
 	topN, _ := cmd.Flags().GetInt("top")
-	providerFilter, _ := cmd.Flags().GetString("provider")
-	baseDir, _ := cmd.Flags().GetString("base-dir")
-
 	groupBy, err := resolveGroupBy(groupByStr)
 	if err != nil {
 		return err
@@ -75,24 +77,9 @@ func runDaily(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --top: must be >= 1")
 	}
 
-	providers := provider.FilterProviders(provider.Registry(), providerFilter)
-
-	var allSessions []provider.SessionInfo
-	for _, p := range providers {
-		// Check for provider-specific directory override first, then fall back to base-dir
-		dir := baseDir
-		if providerDir, _ := cmd.Flags().GetString(providerDirFlag(p.Name())); providerDir != "" {
-			dir = providerDir
-		}
-		sessions, err := p.CollectSessions(dir)
-		if err != nil {
-			// Skip providers whose data directory doesn't exist
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("collecting sessions from %s: %w", p.Name(), err)
-		}
-		allSessions = append(allSessions, sessions...)
+	allSessions, err := collectSessions(cmd)
+	if err != nil {
+		return err
 	}
 
 	since, until, err := resolveDailyDateRange(
