@@ -13,7 +13,7 @@ Supported providers:
 - **Kimi CLI** — parses `~/.kimi/sessions/**/wire.jsonl`
 - **Claude Code** — parses `~/.claude/projects/**/*.jsonl` (with streaming deduplication)
 - **Codex CLI** — parses `~/.codex/sessions/**/*.jsonl`
-- **Cursor** — parses imported Cursor usage export CSVs from `~/.codetok/cursor/**/*.csv`
+- **Cursor** — parses local Cursor usage export CSVs from `~/.codetok/cursor/*.csv`, `~/.codetok/cursor/imports/**/*.csv`, and `~/.codetok/cursor/synced/**/*.csv`
 
 Planned:
 
@@ -84,7 +84,7 @@ codetok daily --since 2026-02-01 --until 2026-02-15
 codetok daily --provider claude
 codetok session --provider kimi
 
-# Read imported Cursor usage exports from a custom directory
+# Read Cursor usage exports from a custom local directory only
 codetok daily --all --cursor-dir ~/Downloads/cursor-usage
 
 # Show local Cursor activity attribution (accepted lines, not tokens)
@@ -101,6 +101,11 @@ codetok daily --top 10
 ```
 
 Tip: if you changed code and run `./bin/codetok`, run `make build` first to refresh the binary.
+
+Cursor command boundaries:
+- `daily`, `session`, and `cursor activity` read local files only.
+- `cursor login`, `cursor status`, and `cursor sync` are the explicit commands that may contact the remote Cursor API.
+- `--cursor-dir` is authoritative and scans only the directory you provide.
 
 ## Validation Workflow
 
@@ -141,6 +146,7 @@ Use `--unit raw`/`k`/`m`/`g` to control display scale.
 JSON output always keeps raw integer token counts.
 In JSON output, `provider` always keeps provider meaning; grouped dimension and value are described by `group_by` + `group`.
 Use `--top N` to control how many groups appear in the share section for the current grouping dimension.
+Cursor usage is still local-only in this command: by default `codetok` scans legacy root CSVs plus `imports/` and `synced/` under `~/.codetok/cursor/`. It does not trigger implicit sync.
 
 ```
 Daily Total Trend
@@ -176,7 +182,7 @@ Flags:
 | `--kimi-dir` | Override Kimi CLI data directory |
 | `--claude-dir` | Override Claude Code data directory |
 | `--codex-dir` | Override Codex CLI data directory |
-| `--cursor-dir` | Override Cursor CSV import directory |
+| `--cursor-dir` | Override Cursor CSV directory; scans only the provided local path |
 
 Common combinations:
 - `codetok daily` — last 7 days, dashboard grouped by CLI/provider, unit `m`
@@ -189,6 +195,7 @@ Common combinations:
 ### `codetok session`
 
 Show per-session token usage.
+Cursor usage is still local-only in this command: by default `codetok` scans legacy root CSVs plus `imports/` and `synced/` under `~/.codetok/cursor/`. It does not trigger implicit sync.
 
 ```
 Date        Provider  Session                               Title                      Input     Output  Total
@@ -198,6 +205,7 @@ TOTAL                                                                           
 ```
 
 Flags: `--json`, `--since`, `--until`, `--provider`, `--base-dir`, `--kimi-dir`, `--claude-dir`, `--codex-dir`, `--cursor-dir`.
+When `--cursor-dir` is set, only that local directory is scanned.
 
 ### `codetok version`
 
@@ -213,12 +221,12 @@ Flags: `--json`, `--db-path`.
 
 ## How It Works
 
-codetok reads local session data and imported usage exports stored on disk. Each provider has its own parser that understands the tool's data format. JSONL session files are parsed in parallel using bounded goroutines (default: `min(NumCPU, 8)`, configurable via `CODETOK_WORKERS` env var); Cursor CSV imports are discovered recursively and parsed one file at a time.
+codetok reads local session data and usage exports stored on disk. Each provider has its own parser that understands the tool's data format. JSONL session files are parsed in parallel using bounded goroutines (default: `min(NumCPU, 8)`, configurable via `CODETOK_WORKERS` env var); Cursor CSV files are discovered from local directories and parsed one file at a time.
 
 Statistics scope:
 - Token usage is computed by aggregating token counters from existing local session logs.
 - `daily` and `session` do not call provider APIs.
-- `codetok cursor login`, `status`, and `sync` are the explicit Cursor-only commands that may contact the remote Cursor API.
+- `codetok cursor login`, `status`, and `sync` are the explicit Cursor commands that may contact the remote Cursor API.
 - Sessions are counted only if their local log files currently exist.
 
 **Kimi CLI** — `~/.kimi/sessions/<work-dir-hash>/<session-uuid>/wire.jsonl`
@@ -232,8 +240,10 @@ Statistics scope:
 - Parses `event_msg` events with `payload.type="token_count"`
 - Takes the last (cumulative) token count per session
 
-**Cursor** — `~/.codetok/cursor/**/*.csv`
-- Parses imported Cursor dashboard usage export CSV rows from disk
+**Cursor** — `~/.codetok/cursor/*.csv`, `~/.codetok/cursor/imports/**/*.csv`, `~/.codetok/cursor/synced/**/*.csv`
+- Parses local Cursor dashboard usage export CSV rows from disk
+- Default reporting merges legacy flat files with imported and synced cache CSVs
+- `daily` and `session` do not trigger implicit Cursor sync or remote API access
 - Maps `Input (w/o Cache Write)`, `Input (w/ Cache Write)`, `Cache Read`, and `Output Tokens` into `codetok` token fields
 - Treats each CSV row as one local usage record for session/day views
 - Cursor Tab token usage is not supported because the exported data does not provide a defensible Tab token split

@@ -13,7 +13,7 @@
 - **Kimi CLI** — 解析 `~/.kimi/sessions/**/wire.jsonl`
 - **Claude Code** — 解析 `~/.claude/projects/**/*.jsonl`（含流式去重）
 - **Codex CLI** — 解析 `~/.codex/sessions/**/*.jsonl`
-- **Cursor** — 解析 `~/.codetok/cursor/**/*.csv` 下导入的 Cursor 用量导出文件
+- **Cursor** — 解析 `~/.codetok/cursor/*.csv`、`~/.codetok/cursor/imports/**/*.csv` 和 `~/.codetok/cursor/synced/**/*.csv` 下的本地 Cursor 用量导出文件
 
 计划支持：
 
@@ -84,7 +84,7 @@ codetok daily --since 2026-02-01 --until 2026-02-15
 codetok daily --provider claude
 codetok session --provider kimi
 
-# 从自定义目录读取 Cursor 导出的 CSV
+# 只从自定义本地目录读取 Cursor 导出的 CSV
 codetok daily --all --cursor-dir ~/Downloads/cursor-usage
 
 # 查看本地 Cursor 活动归因（accepted lines，不是 token）
@@ -96,6 +96,11 @@ codetok cursor activity --json --db-path ~/.cursor/ai-tracking/ai-code-tracking.
 
 提示：如果你改了代码后直接运行 `./bin/codetok`，请先执行 `make build` 刷新二进制。
 
+Cursor 命令边界：
+- `daily`、`session` 和 `cursor activity` 只读取本地文件。
+- `cursor login`、`cursor status`、`cursor sync` 是唯一可能显式访问 Cursor 远程 API 的命令。
+- 一旦设置 `--cursor-dir`，只会扫描你提供的目录。
+
 ## 使用说明
 
 ### `codetok daily`
@@ -106,6 +111,7 @@ codetok cursor activity --json --db-path ~/.cursor/ai-tracking/ai-code-tracking.
 表格默认按 `k` 单位展示 token 列（`--unit k`）。
 可通过 `--unit raw`/`k`/`m`/`g` 控制展示单位。
 JSON 输出始终保留原始整数 token 值。
+Cursor 在这个命令里仍然是本地读取：默认会扫描 `~/.codetok/cursor/` 下的根目录历史 CSV，以及 `imports/`、`synced/` 子目录；不会隐式触发 sync。
 
 ```
 Date        Provider  Sessions  Input(k)  Output(k)  Cache Read(k)  Cache Create(k)  Total(k)
@@ -130,7 +136,7 @@ TOTAL                 49        2965.04k 369.85k 24638.67k   0.00k         27973
 | `--kimi-dir` | 自定义 Kimi CLI 数据目录 |
 | `--claude-dir` | 自定义 Claude Code 数据目录 |
 | `--codex-dir` | 自定义 Codex CLI 数据目录 |
-| `--cursor-dir` | 自定义 Cursor CSV 导入目录 |
+| `--cursor-dir` | 自定义 Cursor CSV 目录；只扫描你提供的本地路径 |
 
 常用组合：
 - `codetok daily` — 最近 7 天，表格单位 `k`
@@ -141,6 +147,7 @@ TOTAL                 49        2965.04k 369.85k 24638.67k   0.00k         27973
 ### `codetok session`
 
 按会话展示 token 用量。
+Cursor 在这个命令里仍然是本地读取：默认会扫描 `~/.codetok/cursor/` 下的根目录历史 CSV，以及 `imports/`、`synced/` 子目录；不会隐式触发 sync。
 
 ```
 Date        Provider  Session                               Title                      Input     Output  Total
@@ -150,6 +157,7 @@ TOTAL                                                                           
 ```
 
 参数：`--json`、`--since`、`--until`、`--provider`、`--base-dir`、`--kimi-dir`、`--claude-dir`、`--codex-dir`、`--cursor-dir`。
+设置 `--cursor-dir` 后，只会扫描该本地目录。
 
 ### `codetok version`
 
@@ -165,7 +173,7 @@ TOTAL                                                                           
 
 ## 工作原理
 
-codetok 读取本地磁盘上的会话数据和手动导入的用量导出文件。每个 Provider 有独立的解析器，理解对应工具的数据格式。JSONL 会话文件通过有界 goroutine 并行解析（默认：`min(NumCPU, 8)`，可通过 `CODETOK_WORKERS` 环境变量配置）；Cursor CSV 导入文件会递归扫描并按文件顺序解析。
+codetok 读取本地磁盘上的会话数据和用量导出文件。每个 Provider 有独立的解析器，理解对应工具的数据格式。JSONL 会话文件通过有界 goroutine 并行解析（默认：`min(NumCPU, 8)`，可通过 `CODETOK_WORKERS` 环境变量配置）；Cursor CSV 文件从本地目录发现后按文件顺序解析。
 
 统计口径：
 - token 用量通过聚合本地已有会话日志中的 token 计数字段得到。
@@ -184,8 +192,10 @@ codetok 读取本地磁盘上的会话数据和手动导入的用量导出文件
 - 解析 `event_msg` 事件中 `payload.type="token_count"` 的记录
 - 取最后一条累计 token 计数
 
-**Cursor** — `~/.codetok/cursor/**/*.csv`
-- 解析从 Cursor Dashboard 导出的 CSV 文件
+**Cursor** — `~/.codetok/cursor/*.csv`、`~/.codetok/cursor/imports/**/*.csv`、`~/.codetok/cursor/synced/**/*.csv`
+- 解析本地保存的 Cursor Dashboard CSV 文件
+- 默认会合并历史平铺 CSV、手工导入 CSV 和 sync 缓存 CSV
+- `daily` 与 `session` 不会隐式触发 Cursor sync 或远程 API 访问
 - 将 `Input (w/o Cache Write)`、`Input (w/ Cache Write)`、`Cache Read`、`Output Tokens` 映射到 `codetok` 的 token 字段
 - 每一行 CSV 视为一条本地 usage 记录，用于 session/day 视图
 - 暂不支持 Cursor Tab token 统计，因为导出数据没有提供可信的 Tab token 拆分

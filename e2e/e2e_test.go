@@ -3,10 +3,13 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	cursorapi "github.com/miss-you/codetok/cursor"
@@ -69,6 +72,7 @@ func buildBinary(t *testing.T) string {
 	}
 
 	cmd := exec.Command("go", "build", "-o", binPath, moduleRoot)
+	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(t.TempDir(), "gocache"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build codetok: %v\n%s", err, out)
 	}
@@ -88,10 +92,74 @@ func runCodetok(t *testing.T, binPath string, args ...string) string {
 	return stdout.String()
 }
 
+func runCodetokWithEnv(t *testing.T, binPath string, env []string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(binPath, args...)
+	cmd.Env = append(os.Environ(), env...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("command %v failed: %v\nstderr: %s", args, err, stderr.String())
+	}
+	return stdout.String()
+}
+
 type activityFixtureRow = testutil.CursorActivityRow
 
 func writeCursorActivityDB(t *testing.T, rows []activityFixtureRow) string {
 	return testutil.WriteCursorActivityDB(t, rows)
+}
+
+func defaultCursorArgs(t *testing.T, extraArgs ...string) []string {
+	t.Helper()
+	empty := emptyDir(t)
+	base := []string{"--claude-dir", empty, "--codex-dir", empty, "--kimi-dir", empty}
+	return append(base, extraArgs...)
+}
+
+func cursorEnv(home string) []string {
+	return []string{"HOME=" + home}
+}
+
+func proxyEnv(proxyURL string) []string {
+	return []string{
+		"HTTP_PROXY=" + proxyURL,
+		"HTTPS_PROXY=" + proxyURL,
+		"ALL_PROXY=" + proxyURL,
+		"NO_PROXY=",
+	}
+}
+
+func newProxyTrap(t *testing.T) (string, func() int32) {
+	t.Helper()
+
+	var count int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&count, 1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(server.Close)
+
+	return server.URL, func() int32 {
+		return atomic.LoadInt32(&count)
+	}
+}
+
+func writeCursorCSVFixtureE2E(t *testing.T, path string, rows ...string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("creating parent directory: %v", err)
+	}
+
+	content := "Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens\n"
+	content += strings.Join(rows, "\n")
+	content += "\n"
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing csv fixture: %v", err)
+	}
 }
 
 func TestDailyCommand_JSONOutput_DefaultGroupByCLI(t *testing.T) {
@@ -654,5 +722,218 @@ func TestSessionCommand_JSONOutput_CursorProvider(t *testing.T) {
 	}
 	if !ids["usage-export:1"] || !ids["usage-export:2"] {
 		t.Errorf("expected sessions usage-export:1 and usage-export:2, got %v", ids)
+	}
+}
+
+func TestDailyCommand_JSONOutput_CursorDefaultRootImportOnly(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+	writeCursorCSVFixtureE2E(t, filepath.Join(home, ".codetok", "cursor", "imports", "manual.csv"),
+		`"2026-02-18T10:00:00Z","Included","manual-model","2","3","4","5"`,
+	)
+
+	output := runCodetokWithEnv(t, bin, cursorEnv(home), defaultCursorArgs(t, "daily", "--json", "--all", "--provider", "cursor")...)
+
+	var daily []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+
+	if len(daily) != 1 {
+		t.Fatalf("expected 1 daily entry, got %d: %s", len(daily), output)
+	}
+	if daily[0].Sessions != 1 {
+		t.Fatalf("expected 1 session, got %d", daily[0].Sessions)
+	}
+	if daily[0].TokenUsage.Total() != 14 {
+		t.Fatalf("expected total tokens 14, got %d", daily[0].TokenUsage.Total())
+	}
+}
+
+func TestSessionCommand_JSONOutput_CursorDefaultRootSyncOnly(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+	writeCursorCSVFixtureE2E(t, filepath.Join(home, ".codetok", "cursor", "synced", "cached.csv"),
+		`"2026-02-19T10:00:00Z","Included","synced-model","3","4","5","6"`,
+	)
+
+	output := runCodetokWithEnv(t, bin, cursorEnv(home), defaultCursorArgs(t, "session", "--json", "--provider", "cursor")...)
+
+	var sessions []struct {
+		SessionID  string              `json:"session_id"`
+		TokenUsage provider.TokenUsage `json:"token_usage"`
+	}
+	if err := json.Unmarshal([]byte(output), &sessions); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d: %s", len(sessions), output)
+	}
+	if sessions[0].SessionID != "cached:1" {
+		t.Fatalf("SessionID = %q, want %q", sessions[0].SessionID, "cached:1")
+	}
+	if sessions[0].TokenUsage.Total() != 18 {
+		t.Fatalf("expected total tokens 18, got %d", sessions[0].TokenUsage.Total())
+	}
+}
+
+func TestDailyCommand_JSONOutput_CursorDefaultRootEmpty(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+
+	output := runCodetokWithEnv(t, bin, cursorEnv(home), defaultCursorArgs(t, "daily", "--json", "--all", "--provider", "cursor")...)
+
+	var daily []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+
+	if len(daily) != 0 {
+		t.Fatalf("expected 0 daily entries for empty Cursor root, got %d: %s", len(daily), output)
+	}
+}
+
+func TestDailyCommand_JSONOutput_CursorDefaultRootMergesImportSyncAndLegacy(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+	root := filepath.Join(home, ".codetok", "cursor")
+	writeCursorCSVFixtureE2E(t, filepath.Join(root, "legacy.csv"),
+		`"2026-02-17T10:00:00Z","Included","legacy-model","1","2","3","4"`,
+	)
+	writeCursorCSVFixtureE2E(t, filepath.Join(root, "imports", "manual.csv"),
+		`"2026-02-18T10:00:00Z","Included","manual-model","2","3","4","5"`,
+	)
+	writeCursorCSVFixtureE2E(t, filepath.Join(root, "synced", "cached.csv"),
+		`"2026-02-19T10:00:00Z","Included","synced-model","3","4","5","6"`,
+	)
+	writeCursorCSVFixtureE2E(t, filepath.Join(root, "archive", "ignored.csv"),
+		`"2026-02-20T10:00:00Z","Included","ignored-model","11","12","13","14"`,
+	)
+
+	output := runCodetokWithEnv(t, bin, cursorEnv(home), defaultCursorArgs(t, "daily", "--json", "--all", "--provider", "cursor")...)
+
+	var daily []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+
+	totalSessions := 0
+	totalTokens := 0
+	for _, day := range daily {
+		totalSessions += day.Sessions
+		totalTokens += day.TokenUsage.Total()
+	}
+
+	if totalSessions != 3 {
+		t.Fatalf("expected 3 sessions, got %d", totalSessions)
+	}
+	if totalTokens != 42 {
+		t.Fatalf("expected total tokens 42, got %d", totalTokens)
+	}
+}
+
+func TestSessionCommand_JSONOutput_CursorDefaultRootSyncFailureKeepsCachedData(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+	root := filepath.Join(home, ".codetok", "cursor", "synced")
+	writeCursorCSVFixtureE2E(t, filepath.Join(root, "cached.csv"),
+		`"2026-02-19T10:00:00Z","Included","synced-model","3","4","5","6"`,
+	)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("creating synced dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "failed.csv"), []byte("Date,Model\nbroken"), 0o644); err != nil {
+		t.Fatalf("writing invalid sync file: %v", err)
+	}
+
+	output := runCodetokWithEnv(t, bin, cursorEnv(home), defaultCursorArgs(t, "session", "--json", "--provider", "cursor")...)
+
+	var sessions []struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(output), &sessions); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d: %s", len(sessions), output)
+	}
+	if sessions[0].SessionID != "cached:1" {
+		t.Fatalf("SessionID = %q, want %q", sessions[0].SessionID, "cached:1")
+	}
+}
+
+func TestDailyCommand_JSONOutput_CursorDirOverrideIsAuthoritative(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+	writeCursorCSVFixtureE2E(t, filepath.Join(home, ".codetok", "cursor", "imports", "default.csv"),
+		`"2026-02-18T10:00:00Z","Included","default-model","2","3","4","5"`,
+	)
+
+	customDir := t.TempDir()
+	writeCursorCSVFixtureE2E(t, filepath.Join(customDir, "custom.csv"),
+		`"2026-02-21T10:00:00Z","Included","custom-model","7","8","9","10"`,
+	)
+
+	args := append(defaultCursorArgs(t, "daily", "--json", "--all", "--provider", "cursor"), "--cursor-dir", customDir)
+	output := runCodetokWithEnv(t, bin, cursorEnv(home), args...)
+
+	var daily []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+
+	if len(daily) != 1 {
+		t.Fatalf("expected 1 daily entry, got %d: %s", len(daily), output)
+	}
+	if daily[0].Sessions != 1 {
+		t.Fatalf("expected 1 session, got %d", daily[0].Sessions)
+	}
+	if daily[0].TokenUsage.Total() != 34 {
+		t.Fatalf("expected total tokens 34, got %d", daily[0].TokenUsage.Total())
+	}
+}
+
+func TestDailyCommand_CursorDoesNotAccessRemoteAPI(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+	writeCursorCSVFixtureE2E(t, filepath.Join(home, ".codetok", "cursor", "synced", "cached.csv"),
+		`"2026-02-19T10:00:00Z","Included","synced-model","3","4","5","6"`,
+	)
+
+	proxyURL, requests := newProxyTrap(t)
+	env := append(cursorEnv(home), proxyEnv(proxyURL)...)
+	output := runCodetokWithEnv(t, bin, env, defaultCursorArgs(t, "daily", "--json", "--all", "--provider", "cursor")...)
+
+	var daily []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+	if requests() != 0 {
+		t.Fatalf("expected 0 proxy requests, got %d", requests())
+	}
+}
+
+func TestSessionCommand_CursorDoesNotAccessRemoteAPI(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+	writeCursorCSVFixtureE2E(t, filepath.Join(home, ".codetok", "cursor", "imports", "manual.csv"),
+		`"2026-02-18T10:00:00Z","Included","manual-model","2","3","4","5"`,
+	)
+
+	proxyURL, requests := newProxyTrap(t)
+	env := append(cursorEnv(home), proxyEnv(proxyURL)...)
+	output := runCodetokWithEnv(t, bin, env, defaultCursorArgs(t, "session", "--json", "--provider", "cursor")...)
+
+	var sessions []map[string]any
+	if err := json.Unmarshal([]byte(output), &sessions); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d: %s", len(sessions), output)
+	}
+	if requests() != 0 {
+		t.Fatalf("expected 0 proxy requests, got %d", requests())
 	}
 }

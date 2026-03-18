@@ -177,7 +177,7 @@ func TestReadActivity_UnexpectedQueryErrorReturnsError(t *testing.T) {
 		t.Fatal("expected unexpected query failure to return error")
 	}
 	if got := err.Error(); got == "" || got == "no such table: scored_commits" {
-		t.Fatalf("Read error = %q, want unexpected query error", got)
+		t.Fatalf("Read error = %q, want wrapped unexpected query error", got)
 	}
 }
 

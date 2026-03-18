@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -79,5 +80,5 @@ INSERT INTO scored_commits (
 }
 
 func cursorActivityCommitHash(i int) string {
-	return "commit-" + string(rune('a'+i))
+	return fmt.Sprintf("commit-%d", i)
 }

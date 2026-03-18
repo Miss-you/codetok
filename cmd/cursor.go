@@ -36,11 +36,11 @@ func newDefaultCursorCommandService() cursorCommandService {
 func newCursorCommand(service cursorCommandService) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cursor",
-		Short: "Explicit Cursor authentication and dashboard sync",
-		Long: `Manage explicit Cursor authentication and local dashboard sync.
+		Short: "Cursor auth, sync, and local activity tools",
+		Long: `Manage Cursor authentication, local dashboard sync, and local activity attribution.
 
-These commands are the only codetok flows that may contact the remote Cursor API.
-Daily and session reporting remain local-file based.`,
+Only 'login', 'status', and 'sync' may contact the remote Cursor API.
+'activity' plus daily and session reporting remain local-file based.`,
 	}
 
 	cmd.AddCommand(
@@ -230,5 +230,5 @@ func printCursorActivity(result cursorapi.ActivityResult) {
 	fmt.Fprintln(w, "Source\tLines Added\tLines Deleted")
 	fmt.Fprintf(w, "composer\t%d\t%d\n", result.Composer.LinesAdded, result.Composer.LinesDeleted)
 	fmt.Fprintf(w, "tab\t%d\t%d\n", result.Tab.LinesAdded, result.Tab.LinesDeleted)
-	w.Flush()
+	_ = w.Flush()
 }
