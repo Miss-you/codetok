@@ -87,6 +87,12 @@ codetok session --provider kimi
 # Read Cursor usage exports from a custom local directory only
 codetok daily --all --cursor-dir ~/Downloads/cursor-usage
 
+# Show local Cursor activity attribution (accepted lines, not tokens)
+codetok cursor activity
+
+# Show local Cursor activity attribution as JSON from a custom SQLite path
+codetok cursor activity --json --db-path ~/.cursor/ai-tracking/ai-code-tracking.db
+
 # Switch aggregation to model view (explicit opt-in)
 codetok daily --group-by model
 
@@ -96,9 +102,9 @@ codetok daily --top 10
 
 Tip: if you changed code and run `./bin/codetok`, run `make build` first to refresh the binary.
 
-Cursor reporting is local-only:
-- `daily` and `session` read local CSV files only.
-- They never trigger implicit Cursor login or sync.
+Cursor command boundaries:
+- `daily`, `session`, and `cursor activity` read local files only.
+- `cursor login`, `cursor status`, and `cursor sync` are the explicit commands that may contact the remote Cursor API.
 - `--cursor-dir` is authoritative and scans only the directory you provide.
 
 ## Validation Workflow
@@ -205,13 +211,22 @@ When `--cursor-dir` is set, only that local directory is scanned.
 
 Print version information. Commit hash and build date are shown when available.
 
+### `codetok cursor activity`
+
+Show Cursor activity attribution from the local `~/.cursor/ai-tracking/ai-code-tracking.db` database.
+This command reports accepted-line activity for `composer` and `tab`.
+It is a separate local attribution view, not token accounting.
+
+Flags: `--json`, `--db-path`.
+
 ## How It Works
 
 codetok reads local session data and usage exports stored on disk. Each provider has its own parser that understands the tool's data format. JSONL session files are parsed in parallel using bounded goroutines (default: `min(NumCPU, 8)`, configurable via `CODETOK_WORKERS` env var); Cursor CSV files are discovered from local directories and parsed one file at a time.
 
 Statistics scope:
 - Token usage is computed by aggregating token counters from existing local session logs.
-- codetok does not call provider APIs.
+- `daily` and `session` do not call provider APIs.
+- `codetok cursor login`, `status`, and `sync` are the explicit Cursor commands that may contact the remote Cursor API.
 - Sessions are counted only if their local log files currently exist.
 
 **Kimi CLI** — `~/.kimi/sessions/<work-dir-hash>/<session-uuid>/wire.jsonl`
@@ -232,6 +247,7 @@ Statistics scope:
 - Maps `Input (w/o Cache Write)`, `Input (w/ Cache Write)`, `Cache Read`, and `Output Tokens` into `codetok` token fields
 - Treats each CSV row as one local usage record for session/day views
 - Cursor Tab token usage is not supported because the exported data does not provide a defensible Tab token split
+- Separate local activity attribution is available through `codetok cursor activity`, backed by `~/.cursor/ai-tracking/ai-code-tracking.db`
 
 ## Project Structure
 

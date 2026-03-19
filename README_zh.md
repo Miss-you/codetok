@@ -86,13 +86,19 @@ codetok session --provider kimi
 
 # 只从自定义本地目录读取 Cursor 导出的 CSV
 codetok daily --all --cursor-dir ~/Downloads/cursor-usage
+
+# 查看本地 Cursor 活动归因（accepted lines，不是 token）
+codetok cursor activity
+
+# 以 JSON 查看本地 Cursor 活动归因，并指定 SQLite 路径
+codetok cursor activity --json --db-path ~/.cursor/ai-tracking/ai-code-tracking.db
 ```
 
 提示：如果你改了代码后直接运行 `./bin/codetok`，请先执行 `make build` 刷新二进制。
 
-Cursor 报表命令只读本地文件：
-- `daily` 和 `session` 只读取本地 CSV。
-- 这两个命令不会隐式触发 Cursor 登录或 sync。
+Cursor 命令边界：
+- `daily`、`session` 和 `cursor activity` 只读取本地文件。
+- `cursor login`、`cursor status`、`cursor sync` 是唯一可能显式访问 Cursor 远程 API 的命令。
 - 一旦设置 `--cursor-dir`，只会扫描你提供的目录。
 
 ## 使用说明
@@ -157,13 +163,22 @@ TOTAL                                                                           
 
 输出版本信息；当 commit hash 与构建时间可用时会一并显示。
 
+### `codetok cursor activity`
+
+读取本地 `~/.cursor/ai-tracking/ai-code-tracking.db`，展示 Cursor 的活动归因。
+该命令会分别输出 `composer` 与 `tab` 的 accepted-line 指标。
+它是独立的本地 activity 视图，不属于 token 统计。
+
+参数：`--json`、`--db-path`。
+
 ## 工作原理
 
 codetok 读取本地磁盘上的会话数据和用量导出文件。每个 Provider 有独立的解析器，理解对应工具的数据格式。JSONL 会话文件通过有界 goroutine 并行解析（默认：`min(NumCPU, 8)`，可通过 `CODETOK_WORKERS` 环境变量配置）；Cursor CSV 文件从本地目录发现后按文件顺序解析。
 
 统计口径：
 - token 用量通过聚合本地已有会话日志中的 token 计数字段得到。
-- codetok 不调用各 Provider 的远程 API。
+- `daily` 与 `session` 不会调用各 Provider 的远程 API。
+- `codetok cursor login`、`status`、`sync` 是唯一会显式访问 Cursor 远程 API 的命令。
 - 只有当前本地仍存在日志文件的会话才会被统计。
 
 **Kimi CLI** — `~/.kimi/sessions/<工作目录hash>/<会话UUID>/wire.jsonl`
@@ -184,6 +199,7 @@ codetok 读取本地磁盘上的会话数据和用量导出文件。每个 Provi
 - 将 `Input (w/o Cache Write)`、`Input (w/ Cache Write)`、`Cache Read`、`Output Tokens` 映射到 `codetok` 的 token 字段
 - 每一行 CSV 视为一条本地 usage 记录，用于 session/day 视图
 - 暂不支持 Cursor Tab token 统计，因为导出数据没有提供可信的 Tab token 拆分
+- 可通过 `codetok cursor activity` 读取 `~/.cursor/ai-tracking/ai-code-tracking.db` 中独立的本地 activity 归因数据
 
 ## 项目结构
 

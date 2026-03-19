@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	cursorapi "github.com/miss-you/codetok/cursor"
+	"github.com/miss-you/codetok/internal/testutil"
 	"github.com/miss-you/codetok/provider"
 )
 
@@ -103,6 +105,12 @@ func runCodetokWithEnv(t *testing.T, binPath string, env []string, args ...strin
 	return stdout.String()
 }
 
+type activityFixtureRow = testutil.CursorActivityRow
+
+func writeCursorActivityDB(t *testing.T, rows []activityFixtureRow) string {
+	return testutil.WriteCursorActivityDB(t, rows)
+}
+
 func defaultCursorArgs(t *testing.T, extraArgs ...string) []string {
 	t.Helper()
 	empty := emptyDir(t)
@@ -191,6 +199,129 @@ func TestDailyCommand_JSONOutput_DefaultGroupByCLI(t *testing.T) {
 	expectedTotal := 1635 + 3610
 	if totalTokens != expectedTotal {
 		t.Errorf("expected %d total tokens, got %d", expectedTotal, totalTokens)
+	}
+}
+
+func TestCursorActivityCommand_JSONOutput(t *testing.T) {
+	bin := buildBinary(t)
+	dbPath := writeCursorActivityDB(t, []activityFixtureRow{
+		{ComposerAdded: 9, ComposerDeleted: 2, TabAdded: 4, TabDeleted: 1},
+	})
+
+	output := runCodetok(t, bin, "cursor", "activity", "--json", "--db-path", dbPath)
+
+	var result cursorapi.ActivityResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("failed to parse activity JSON output: %v\noutput: %s", err, output)
+	}
+
+	if !result.HasData {
+		t.Fatal("expected activity result to report data")
+	}
+	if result.ScoredCommits != 1 {
+		t.Fatalf("ScoredCommits = %d, want 1", result.ScoredCommits)
+	}
+	if result.Composer.LinesAdded != 9 || result.Composer.LinesDeleted != 2 {
+		t.Fatalf("composer metrics = %+v, want added=9 deleted=2", result.Composer)
+	}
+	if result.Tab.LinesAdded != 4 || result.Tab.LinesDeleted != 1 {
+		t.Fatalf("tab metrics = %+v, want added=4 deleted=1", result.Tab)
+	}
+}
+
+func TestCursorActivityDoesNotPolluteDailyJSONTokenFields(t *testing.T) {
+	bin := buildBinary(t)
+	cursorDir := cursorTestdataDir(t)
+	dbPath := writeCursorActivityDB(t, []activityFixtureRow{
+		{ComposerAdded: 12, ComposerDeleted: 3, TabAdded: 6, TabDeleted: 1},
+	})
+
+	activityOutput := runCodetok(t, bin, "cursor", "activity", "--json", "--db-path", dbPath)
+	if !strings.Contains(activityOutput, "\"composer\"") || !strings.Contains(activityOutput, "\"tab\"") {
+		t.Fatalf("activity output = %q, want composer/tab fields", activityOutput)
+	}
+
+	args := []string{
+		"--claude-dir", emptyDir(t),
+		"--codex-dir", emptyDir(t),
+		"--kimi-dir", emptyDir(t),
+		"daily", "--json", "--all",
+		"--cursor-dir", cursorDir,
+	}
+	output := runCodetok(t, bin, args...)
+
+	var dailyRows []map[string]any
+	if err := json.Unmarshal([]byte(output), &dailyRows); err != nil {
+		t.Fatalf("failed to parse daily JSON output: %v\noutput: %s", err, output)
+	}
+	if len(dailyRows) != 2 {
+		t.Fatalf("expected 2 daily rows, got %d", len(dailyRows))
+	}
+	if strings.Contains(output, "\"composer\"") || strings.Contains(output, "\"tab\"") {
+		t.Fatalf("daily JSON should not contain activity fields: %s", output)
+	}
+
+	for _, row := range dailyRows {
+		tokenUsage, ok := row["token_usage"].(map[string]any)
+		if !ok {
+			t.Fatalf("token_usage field missing or wrong type: %#v", row["token_usage"])
+		}
+		if len(tokenUsage) != 4 {
+			t.Fatalf("token_usage keys = %v, want exactly 4 token fields", tokenUsage)
+		}
+		for _, key := range []string{"input_other", "output", "input_cache_read", "input_cache_creation"} {
+			if _, ok := tokenUsage[key]; !ok {
+				t.Fatalf("token_usage missing key %q: %v", key, tokenUsage)
+			}
+		}
+	}
+}
+
+func TestCursorActivityDoesNotPolluteSessionJSONTokenFields(t *testing.T) {
+	bin := buildBinary(t)
+	cursorDir := cursorTestdataDir(t)
+	dbPath := writeCursorActivityDB(t, []activityFixtureRow{
+		{ComposerAdded: 7, ComposerDeleted: 2, TabAdded: 5, TabDeleted: 1},
+	})
+
+	activityOutput := runCodetok(t, bin, "cursor", "activity", "--json", "--db-path", dbPath)
+	if !strings.Contains(activityOutput, "\"composer\"") || !strings.Contains(activityOutput, "\"tab\"") {
+		t.Fatalf("activity output = %q, want composer/tab fields", activityOutput)
+	}
+
+	args := []string{
+		"--claude-dir", emptyDir(t),
+		"--codex-dir", emptyDir(t),
+		"--kimi-dir", emptyDir(t),
+		"session", "--json",
+		"--cursor-dir", cursorDir,
+	}
+	output := runCodetok(t, bin, args...)
+
+	var sessions []map[string]any
+	if err := json.Unmarshal([]byte(output), &sessions); err != nil {
+		t.Fatalf("failed to parse session JSON output: %v\noutput: %s", err, output)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %d", len(sessions))
+	}
+	if strings.Contains(output, "\"composer\"") || strings.Contains(output, "\"tab\"") {
+		t.Fatalf("session JSON should not contain activity fields: %s", output)
+	}
+
+	for _, session := range sessions {
+		tokenUsage, ok := session["token_usage"].(map[string]any)
+		if !ok {
+			t.Fatalf("token_usage field missing or wrong type: %#v", session["token_usage"])
+		}
+		if len(tokenUsage) != 4 {
+			t.Fatalf("token_usage keys = %v, want exactly 4 token fields", tokenUsage)
+		}
+		for _, key := range []string{"input_other", "output", "input_cache_read", "input_cache_creation"} {
+			if _, ok := tokenUsage[key]; !ok {
+				t.Fatalf("token_usage missing key %q: %v", key, tokenUsage)
+			}
+		}
 	}
 }
 
