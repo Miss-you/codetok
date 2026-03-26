@@ -2,7 +2,7 @@
 
 The `TokenUsage` struct (after Change 1) has `OutputOther` and `OutputReasoning` fields replacing the single `Output` field, plus a `TotalOutput()` method that sums both. The report layer in `cmd/daily.go` and `cmd/session.go` currently references `.Output` and does not display reasoning tokens. This change updates the report formatting to surface the new field.
 
-The `dayTotal` and `groupTotal` structs embed `provider.TokenUsage`, so they automatically gain the new fields once Change 1 is applied. The only manual work is in `mergeTokenUsage()` (which explicitly copies individual fields) and the `fmt.Fprintf` formatting calls.
+The `dayTotal` and `groupTotal` structs have a `TokenUsage provider.TokenUsage` named field, so they automatically gain the new fields once Change 1 is applied. The only manual work is in `mergeTokenUsage()` (which explicitly copies individual fields) and the `fmt.Fprintf` formatting calls.
 
 ## Goals / Non-Goals
 

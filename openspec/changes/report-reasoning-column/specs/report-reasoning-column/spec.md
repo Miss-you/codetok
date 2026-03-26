@@ -7,7 +7,7 @@ The `printTopGroupShare()` function SHALL display a "Reasoning" column showing `
 #### Scenario: Daily share table with reasoning tokens
 
 - **WHEN** `printTopGroupShare()` renders the share table
-- **THEN** the header row SHALL contain columns in this order: Rank, CLI/Model, Share, Sessions, Total, Input, Output, Reasoning, Cache Read, Cache Create
+- **THEN** the header row SHALL contain columns in this order: Rank, \<group column\> (CLI or Model depending on `--group-by`), Share, Sessions, Total, Input, Output, Reasoning, Cache Read, Cache Create
 - **AND** the "Reasoning" column SHALL display `TokenUsage.OutputReasoning` formatted with the active token unit
 
 #### Scenario: Daily share table with zero reasoning tokens

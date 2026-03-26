@@ -13,9 +13,9 @@ This is Change 1 of 4 in a series. It intentionally breaks consumers to establis
 - Maintain the same arithmetic behavior: for providers that do not report reasoning tokens, `OutputReasoning` defaults to zero, so `TotalOutput()` equals the old `Output` value
 
 **Non-Goals:**
-- Updating any provider parsers to populate `OutputReasoning` (handled by Change 3)
-- Updating any CLI report code to display reasoning columns (handled by Change 4)
-- Renaming `Output` references in provider parsers (handled by Change 2)
+- Updating any provider parsers to populate `OutputReasoning` (handled by Change 2: codex-reasoning-parsing)
+- Renaming `Output` references in provider parsers (handled by Change 3: provider-output-rename)
+- Updating any CLI report code to display reasoning columns (handled by Change 4: report-reasoning-column)
 - Adding input reasoning tokens (not currently reported by any supported provider)
 
 ## Decisions
