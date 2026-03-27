@@ -26,8 +26,8 @@ func TestParseClaudeSession_ValidData(t *testing.T) {
 	if info.TokenUsage.InputCacheRead != 700 {
 		t.Errorf("InputCacheRead = %d, want 700", info.TokenUsage.InputCacheRead)
 	}
-	if info.TokenUsage.Output != 105 {
-		t.Errorf("Output = %d, want 105", info.TokenUsage.Output)
+	if info.TokenUsage.OutputOther != 105 {
+		t.Errorf("OutputOther = %d, want 105", info.TokenUsage.OutputOther)
 	}
 
 	if info.TokenUsage.TotalInput() != 1225 {
@@ -108,8 +108,8 @@ func TestParseClaudeSession_Dedup(t *testing.T) {
 	if info.TokenUsage.InputCacheRead != 400 {
 		t.Errorf("InputCacheRead = %d, want 400", info.TokenUsage.InputCacheRead)
 	}
-	if info.TokenUsage.Output != 70 {
-		t.Errorf("Output = %d, want 70", info.TokenUsage.Output)
+	if info.TokenUsage.OutputOther != 70 {
+		t.Errorf("OutputOther = %d, want 70", info.TokenUsage.OutputOther)
 	}
 
 	// Without dedup, output would be 5+15+30+40 = 90
@@ -146,8 +146,8 @@ func TestParseClaudeSession_Dedup_NoIDs(t *testing.T) {
 	if info.TokenUsage.InputOther != 30 {
 		t.Errorf("InputOther = %d, want 30", info.TokenUsage.InputOther)
 	}
-	if info.TokenUsage.Output != 15 {
-		t.Errorf("Output = %d, want 15", info.TokenUsage.Output)
+	if info.TokenUsage.OutputOther != 15 {
+		t.Errorf("OutputOther = %d, want 15", info.TokenUsage.OutputOther)
 	}
 }
 
@@ -184,8 +184,8 @@ func TestParseClaudeSession_Dedup_PartialIDs(t *testing.T) {
 	if info.TokenUsage.InputOther != 150 {
 		t.Errorf("InputOther = %d, want 150", info.TokenUsage.InputOther)
 	}
-	if info.TokenUsage.Output != 90 {
-		t.Errorf("Output = %d, want 90", info.TokenUsage.Output)
+	if info.TokenUsage.OutputOther != 90 {
+		t.Errorf("OutputOther = %d, want 90", info.TokenUsage.OutputOther)
 	}
 }
 
@@ -231,8 +231,8 @@ this is not valid json at all
 	if info.TokenUsage.InputOther != 100 {
 		t.Errorf("InputOther = %d, want 100", info.TokenUsage.InputOther)
 	}
-	if info.TokenUsage.Output != 30 {
-		t.Errorf("Output = %d, want 30", info.TokenUsage.Output)
+	if info.TokenUsage.OutputOther != 30 {
+		t.Errorf("OutputOther = %d, want 30", info.TokenUsage.OutputOther)
 	}
 	// Should have counted the one valid user message
 	if info.Turns != 1 {

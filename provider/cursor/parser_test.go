@@ -51,8 +51,8 @@ func TestParseUsageCSV_ValidExport(t *testing.T) {
 	if first.TokenUsage.InputCacheRead != 105891 {
 		t.Fatalf("InputCacheRead = %d, want 105891", first.TokenUsage.InputCacheRead)
 	}
-	if first.TokenUsage.Output != 21282 {
-		t.Fatalf("Output = %d, want 21282", first.TokenUsage.Output)
+	if first.TokenUsage.OutputOther != 21282 {
+		t.Fatalf("OutputOther = %d, want 21282", first.TokenUsage.OutputOther)
 	}
 	if first.TokenUsage.Total() != 156290 {
 		t.Fatalf("Total = %d, want 156290", first.TokenUsage.Total())
@@ -74,8 +74,8 @@ func TestParseUsageCSV_ValidExport(t *testing.T) {
 	if second.TokenUsage.InputCacheRead != 66964 {
 		t.Fatalf("InputCacheRead = %d, want 66964", second.TokenUsage.InputCacheRead)
 	}
-	if second.TokenUsage.Output != 1612 {
-		t.Fatalf("Output = %d, want 1612", second.TokenUsage.Output)
+	if second.TokenUsage.OutputOther != 1612 {
+		t.Fatalf("OutputOther = %d, want 1612", second.TokenUsage.OutputOther)
 	}
 	if second.TokenUsage.Total() != 76839 {
 		t.Fatalf("Total = %d, want 76839", second.TokenUsage.Total())
@@ -175,8 +175,8 @@ func TestParseUsageCSV_LegacyExportWithoutKindColumn(t *testing.T) {
 	if session.TokenUsage.InputCacheRead != 789 {
 		t.Fatalf("InputCacheRead = %d, want 789", session.TokenUsage.InputCacheRead)
 	}
-	if session.TokenUsage.Output != 10 {
-		t.Fatalf("Output = %d, want 10", session.TokenUsage.Output)
+	if session.TokenUsage.OutputOther != 10 {
+		t.Fatalf("OutputOther = %d, want 10", session.TokenUsage.OutputOther)
 	}
 	if session.TokenUsage.Total() != 1378 {
 		t.Fatalf("Total = %d, want 1378", session.TokenUsage.Total())
@@ -212,8 +212,8 @@ func TestParseUsageCSV_BlankTokenCellsMapToZeroWithoutUsingTotalTokens(t *testin
 	if usage.InputCacheRead != 0 {
 		t.Fatalf("InputCacheRead = %d, want 0", usage.InputCacheRead)
 	}
-	if usage.Output != 56 {
-		t.Fatalf("Output = %d, want 56", usage.Output)
+	if usage.OutputOther != 56 {
+		t.Fatalf("OutputOther = %d, want 56", usage.OutputOther)
 	}
 	if usage.Total() != 90 {
 		t.Fatalf("Total = %d, want 90", usage.Total())

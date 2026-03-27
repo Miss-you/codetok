@@ -127,18 +127,19 @@ func printSessionTable(sessions []provider.SessionInfo) {
 			s.SessionID,
 			truncate(s.Title, 40),
 			s.TokenUsage.TotalInput(),
-			s.TokenUsage.Output,
+			s.TokenUsage.OutputOther,
 			s.TokenUsage.Total(),
 		)
 		totalUsage.InputOther += s.TokenUsage.InputOther
-		totalUsage.Output += s.TokenUsage.Output
+		totalUsage.OutputOther += s.TokenUsage.OutputOther
+		totalUsage.OutputReasoning += s.TokenUsage.OutputReasoning
 		totalUsage.InputCacheRead += s.TokenUsage.InputCacheRead
 		totalUsage.InputCacheCreate += s.TokenUsage.InputCacheCreate
 	}
 
 	fmt.Fprintf(w, "TOTAL\t\t\t\t%d\t%d\t%d\n",
 		totalUsage.TotalInput(),
-		totalUsage.Output,
+		totalUsage.OutputOther,
 		totalUsage.Total(),
 	)
 

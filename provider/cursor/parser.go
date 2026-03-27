@@ -254,7 +254,7 @@ func parseUsageRecord(baseName string, rowNumber int, header map[string]int, rec
 		Turns:        1,
 		TokenUsage: provider.TokenUsage{
 			InputOther:       inputOther,
-			Output:           output,
+			OutputOther:      output,
 			InputCacheRead:   inputCacheRead,
 			InputCacheCreate: inputCacheCreate,
 		},

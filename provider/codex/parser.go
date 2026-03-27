@@ -250,7 +250,7 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 				usage := provider.TokenUsage{
 					InputOther:     tu.InputTokens - tu.CachedInputTokens,
 					InputCacheRead: tu.CachedInputTokens,
-					Output:         tu.OutputTokens,
+					OutputOther:    tu.OutputTokens,
 					// Codex doesn't report InputCacheCreate
 				}
 				lastTokenUsage = &usage

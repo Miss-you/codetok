@@ -6,6 +6,53 @@ import (
 	"testing"
 )
 
+func TestTokenUsageJSONAndTotals(t *testing.T) {
+	usage := TokenUsage{
+		InputOther:       10,
+		OutputOther:      40,
+		OutputReasoning:  50,
+		InputCacheRead:   20,
+		InputCacheCreate: 30,
+	}
+
+	b, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatalf("marshal TokenUsage: %v", err)
+	}
+	got := string(b)
+
+	if strings.Contains(got, `"output":`) {
+		t.Fatalf("json should not contain legacy output field: %s", got)
+	}
+	if !strings.Contains(got, `"output_other":40`) {
+		t.Fatalf("json missing output_other field: %s", got)
+	}
+	if !strings.Contains(got, `"output_reasoning":50`) {
+		t.Fatalf("json missing output_reasoning field: %s", got)
+	}
+
+	if usage.TotalOutput() != 90 {
+		t.Fatalf("TotalOutput = %d, want 90", usage.TotalOutput())
+	}
+	if usage.Total() != 150 {
+		t.Fatalf("Total = %d, want 150", usage.Total())
+	}
+}
+
+func TestTokenUsageTotalOutput_ZeroValueCompatibility(t *testing.T) {
+	usage := TokenUsage{
+		InputOther:  100,
+		OutputOther: 200,
+	}
+
+	if usage.TotalOutput() != 200 {
+		t.Fatalf("TotalOutput = %d, want 200", usage.TotalOutput())
+	}
+	if usage.Total() != 300 {
+		t.Fatalf("Total = %d, want 300", usage.Total())
+	}
+}
+
 func TestDailyStatsJSON_SingleProviderGroup(t *testing.T) {
 	ds := DailyStats{
 		Date:         "2026-02-17",

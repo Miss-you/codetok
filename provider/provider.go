@@ -5,7 +5,8 @@ import "time"
 // TokenUsage holds token counts from a session or aggregation.
 type TokenUsage struct {
 	InputOther       int `json:"input_other"`
-	Output           int `json:"output"`
+	OutputOther      int `json:"output_other"`
+	OutputReasoning  int `json:"output_reasoning"`
 	InputCacheRead   int `json:"input_cache_read"`
 	InputCacheCreate int `json:"input_cache_creation"`
 }
@@ -15,9 +16,14 @@ func (t TokenUsage) TotalInput() int {
 	return t.InputOther + t.InputCacheRead + t.InputCacheCreate
 }
 
+// TotalOutput returns the sum of all output token fields.
+func (t TokenUsage) TotalOutput() int {
+	return t.OutputOther + t.OutputReasoning
+}
+
 // Total returns the sum of all token fields.
 func (t TokenUsage) Total() int {
-	return t.TotalInput() + t.Output
+	return t.TotalInput() + t.TotalOutput()
 }
 
 // SessionInfo represents a single coding session with aggregated token usage.

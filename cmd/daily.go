@@ -307,7 +307,8 @@ func aggregateTotalsByGroup(daily []provider.DailyStats) []groupTotal {
 
 func mergeTokenUsage(dst *provider.TokenUsage, src provider.TokenUsage) {
 	dst.InputOther += src.InputOther
-	dst.Output += src.Output
+	dst.OutputOther += src.OutputOther
+	dst.OutputReasoning += src.OutputReasoning
 	dst.InputCacheRead += src.InputCacheRead
 	dst.InputCacheCreate += src.InputCacheCreate
 }
@@ -475,7 +476,7 @@ func printTopGroupShare(groupTotals []groupTotal, unit tokenUnit, groupBy stats.
 			g.Sessions,
 			formatTokenByUnit(g.TokenUsage.Total(), unit),
 			formatTokenByUnit(g.TokenUsage.InputOther, unit),
-			formatTokenByUnit(g.TokenUsage.Output, unit),
+			formatTokenByUnit(g.TokenUsage.OutputOther, unit),
 			formatTokenByUnit(g.TokenUsage.InputCacheRead, unit),
 			formatTokenByUnit(g.TokenUsage.InputCacheCreate, unit),
 		)
