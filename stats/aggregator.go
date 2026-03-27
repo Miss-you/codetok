@@ -66,7 +66,8 @@ func AggregateByDayWithDimension(sessions []provider.SessionInfo, dimension Aggr
 		}
 		agg.stats.Sessions++
 		agg.stats.TokenUsage.InputOther += s.TokenUsage.InputOther
-		agg.stats.TokenUsage.Output += s.TokenUsage.Output
+		agg.stats.TokenUsage.OutputOther += s.TokenUsage.OutputOther
+		agg.stats.TokenUsage.OutputReasoning += s.TokenUsage.OutputReasoning
 		agg.stats.TokenUsage.InputCacheRead += s.TokenUsage.InputCacheRead
 		agg.stats.TokenUsage.InputCacheCreate += s.TokenUsage.InputCacheCreate
 	}

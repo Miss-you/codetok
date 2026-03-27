@@ -207,7 +207,7 @@ func parseWireJSONL(path string) (provider.TokenUsage, int, time.Time, time.Time
 				modelName = firstNonEmpty(payload.ModelName, payload.Model, payload.ModelID)
 			}
 			usage.InputOther += payload.TokenUsage.InputOther
-			usage.Output += payload.TokenUsage.Output
+			usage.OutputOther += payload.TokenUsage.Output
 			usage.InputCacheRead += payload.TokenUsage.InputCacheRead
 			usage.InputCacheCreate += payload.TokenUsage.InputCacheCreation
 

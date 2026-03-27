@@ -260,7 +260,7 @@ func TestPrintDailyDashboard_ThreeSectionLayout_Model(t *testing.T) {
 			Sessions:     1,
 			TokenUsage: provider.TokenUsage{
 				InputOther:       100,
-				Output:           50,
+				OutputOther:      50,
 				InputCacheRead:   200,
 				InputCacheCreate: 10,
 			},
@@ -271,7 +271,7 @@ func TestPrintDailyDashboard_ThreeSectionLayout_Model(t *testing.T) {
 			Sessions:     1,
 			TokenUsage: provider.TokenUsage{
 				InputOther:       200,
-				Output:           80,
+				OutputOther:      80,
 				InputCacheRead:   100,
 				InputCacheCreate: 20,
 			},
@@ -282,7 +282,7 @@ func TestPrintDailyDashboard_ThreeSectionLayout_Model(t *testing.T) {
 			Sessions:     2,
 			TokenUsage: provider.TokenUsage{
 				InputOther:       400,
-				Output:           100,
+				OutputOther:      100,
 				InputCacheRead:   200,
 				InputCacheCreate: 40,
 			},
@@ -312,7 +312,7 @@ func TestPrintDailyDashboard_GroupByCLI(t *testing.T) {
 			Sessions:     1,
 			TokenUsage: provider.TokenUsage{
 				InputOther:       500,
-				Output:           250,
+				OutputOther:      250,
 				InputCacheRead:   1000,
 				InputCacheCreate: 50,
 			},
@@ -323,7 +323,7 @@ func TestPrintDailyDashboard_GroupByCLI(t *testing.T) {
 			Sessions:     1,
 			TokenUsage: provider.TokenUsage{
 				InputOther:       100,
-				Output:           50,
+				OutputOther:      50,
 				InputCacheRead:   200,
 				InputCacheCreate: 10,
 			},
@@ -348,7 +348,7 @@ func TestPrintTopGroupShare_RespectsTopN(t *testing.T) {
 			Sessions: 3,
 			TokenUsage: provider.TokenUsage{
 				InputOther:       900,
-				Output:           300,
+				OutputOther:      300,
 				InputCacheRead:   600,
 				InputCacheCreate: 150,
 			},
@@ -358,7 +358,7 @@ func TestPrintTopGroupShare_RespectsTopN(t *testing.T) {
 			Sessions: 2,
 			TokenUsage: provider.TokenUsage{
 				InputOther:       200,
-				Output:           100,
+				OutputOther:      100,
 				InputCacheRead:   100,
 				InputCacheCreate: 50,
 			},

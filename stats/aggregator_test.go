@@ -15,8 +15,8 @@ func makeSession(id string, startTime time.Time, input, output int) provider.Ses
 		EndTime:   startTime.Add(10 * time.Minute),
 		Turns:     1,
 		TokenUsage: provider.TokenUsage{
-			InputOther: input,
-			Output:     output,
+			InputOther:  input,
+			OutputOther: output,
 		},
 	}
 }
@@ -62,8 +62,8 @@ func TestAggregateByDay_SingleDay(t *testing.T) {
 	if result[0].TokenUsage.InputOther != 300 {
 		t.Errorf("InputOther = %d, want 300", result[0].TokenUsage.InputOther)
 	}
-	if result[0].TokenUsage.Output != 125 {
-		t.Errorf("Output = %d, want 125", result[0].TokenUsage.Output)
+	if result[0].TokenUsage.OutputOther != 125 {
+		t.Errorf("OutputOther = %d, want 125", result[0].TokenUsage.OutputOther)
 	}
 }
 
@@ -98,8 +98,8 @@ func TestAggregateByDay_MultipleDays(t *testing.T) {
 	if result[1].Sessions != 1 {
 		t.Errorf("day2 Sessions = %d, want 1", result[1].Sessions)
 	}
-	if result[1].TokenUsage.Output != 75 {
-		t.Errorf("day2 Output = %d, want 75", result[1].TokenUsage.Output)
+	if result[1].TokenUsage.OutputOther != 75 {
+		t.Errorf("day2 OutputOther = %d, want 75", result[1].TokenUsage.OutputOther)
 	}
 }
 
@@ -149,8 +149,8 @@ func TestAggregateByDay_MultipleProvidersSameDay(t *testing.T) {
 	if result[1].Sessions != 1 {
 		t.Errorf("codex Sessions = %d, want 1", result[1].Sessions)
 	}
-	if result[1].TokenUsage.Output != 100 {
-		t.Errorf("codex Output = %d, want 100", result[1].TokenUsage.Output)
+	if result[1].TokenUsage.OutputOther != 100 {
+		t.Errorf("codex OutputOther = %d, want 100", result[1].TokenUsage.OutputOther)
 	}
 
 	if result[2].Sessions != 2 {
@@ -159,8 +159,8 @@ func TestAggregateByDay_MultipleProvidersSameDay(t *testing.T) {
 	if result[2].TokenUsage.InputOther != 250 {
 		t.Errorf("kimi InputOther = %d, want 250", result[2].TokenUsage.InputOther)
 	}
-	if result[2].TokenUsage.Output != 110 {
-		t.Errorf("kimi Output = %d, want 110", result[2].TokenUsage.Output)
+	if result[2].TokenUsage.OutputOther != 110 {
+		t.Errorf("kimi OutputOther = %d, want 110", result[2].TokenUsage.OutputOther)
 	}
 }
 

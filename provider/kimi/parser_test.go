@@ -17,8 +17,8 @@ func TestParseWireJSONL_ValidData(t *testing.T) {
 	if usage.InputOther != 450 {
 		t.Errorf("InputOther = %d, want 450", usage.InputOther)
 	}
-	if usage.Output != 225 {
-		t.Errorf("Output = %d, want 225", usage.Output)
+	if usage.OutputOther != 225 {
+		t.Errorf("OutputOther = %d, want 225", usage.OutputOther)
 	}
 	if usage.InputCacheRead != 900 {
 		t.Errorf("InputCacheRead = %d, want 900", usage.InputCacheRead)
@@ -90,8 +90,8 @@ this is not valid json
 	if usage.InputOther != 100 {
 		t.Errorf("InputOther = %d, want 100", usage.InputOther)
 	}
-	if usage.Output != 50 {
-		t.Errorf("Output = %d, want 50", usage.Output)
+	if usage.OutputOther != 50 {
+		t.Errorf("OutputOther = %d, want 50", usage.OutputOther)
 	}
 }
 

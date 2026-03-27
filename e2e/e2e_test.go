@@ -266,13 +266,16 @@ func TestCursorActivityDoesNotPolluteDailyJSONTokenFields(t *testing.T) {
 		if !ok {
 			t.Fatalf("token_usage field missing or wrong type: %#v", row["token_usage"])
 		}
-		if len(tokenUsage) != 4 {
-			t.Fatalf("token_usage keys = %v, want exactly 4 token fields", tokenUsage)
+		if len(tokenUsage) != 5 {
+			t.Fatalf("token_usage keys = %v, want exactly 5 token fields", tokenUsage)
 		}
-		for _, key := range []string{"input_other", "output", "input_cache_read", "input_cache_creation"} {
+		for _, key := range []string{"input_other", "output_other", "output_reasoning", "input_cache_read", "input_cache_creation"} {
 			if _, ok := tokenUsage[key]; !ok {
 				t.Fatalf("token_usage missing key %q: %v", key, tokenUsage)
 			}
+		}
+		if _, ok := tokenUsage["output"]; ok {
+			t.Fatalf("token_usage should not contain legacy output key: %v", tokenUsage)
 		}
 	}
 }
@@ -314,13 +317,16 @@ func TestCursorActivityDoesNotPolluteSessionJSONTokenFields(t *testing.T) {
 		if !ok {
 			t.Fatalf("token_usage field missing or wrong type: %#v", session["token_usage"])
 		}
-		if len(tokenUsage) != 4 {
-			t.Fatalf("token_usage keys = %v, want exactly 4 token fields", tokenUsage)
+		if len(tokenUsage) != 5 {
+			t.Fatalf("token_usage keys = %v, want exactly 5 token fields", tokenUsage)
 		}
-		for _, key := range []string{"input_other", "output", "input_cache_read", "input_cache_creation"} {
+		for _, key := range []string{"input_other", "output_other", "output_reasoning", "input_cache_read", "input_cache_creation"} {
 			if _, ok := tokenUsage[key]; !ok {
 				t.Fatalf("token_usage missing key %q: %v", key, tokenUsage)
 			}
+		}
+		if _, ok := tokenUsage["output"]; ok {
+			t.Fatalf("token_usage should not contain legacy output key: %v", tokenUsage)
 		}
 	}
 }

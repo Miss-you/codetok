@@ -30,8 +30,8 @@ func TestParseCodexSession_ValidData(t *testing.T) {
 	if info.TokenUsage.InputCacheRead != 800 {
 		t.Errorf("InputCacheRead = %d, want 800", info.TokenUsage.InputCacheRead)
 	}
-	if info.TokenUsage.Output != 300 {
-		t.Errorf("Output = %d, want 300", info.TokenUsage.Output)
+	if info.TokenUsage.OutputOther != 300 {
+		t.Errorf("OutputOther = %d, want 300", info.TokenUsage.OutputOther)
 	}
 	if info.TokenUsage.InputCacheCreate != 0 {
 		t.Errorf("InputCacheCreate = %d, want 0", info.TokenUsage.InputCacheCreate)
@@ -94,8 +94,8 @@ this is not valid json
 	if info.TokenUsage.InputOther != 300 {
 		t.Errorf("InputOther = %d, want 300", info.TokenUsage.InputOther)
 	}
-	if info.TokenUsage.Output != 100 {
-		t.Errorf("Output = %d, want 100", info.TokenUsage.Output)
+	if info.TokenUsage.OutputOther != 100 {
+		t.Errorf("OutputOther = %d, want 100", info.TokenUsage.OutputOther)
 	}
 }
 
@@ -266,8 +266,8 @@ func TestParseCodexSession_MultipleTokenCounts(t *testing.T) {
 	if info.TokenUsage.InputCacheRead != 2000 {
 		t.Errorf("InputCacheRead = %d, want 2000", info.TokenUsage.InputCacheRead)
 	}
-	if info.TokenUsage.Output != 800 {
-		t.Errorf("Output = %d, want 800", info.TokenUsage.Output)
+	if info.TokenUsage.OutputOther != 800 {
+		t.Errorf("OutputOther = %d, want 800", info.TokenUsage.OutputOther)
 	}
 	if info.Turns != 2 {
 		t.Errorf("Turns = %d, want 2", info.Turns)

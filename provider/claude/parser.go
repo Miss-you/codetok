@@ -171,7 +171,7 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 		inputOther       int
 		inputCacheRead   int
 		inputCacheCreate int
-		output           int
+		outputOther      int
 	}
 	dedupUsage := make(map[string]usageEntry)
 	var uniqueCounter int // fallback counter for entries with no dedup key
@@ -229,7 +229,7 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 					inputOther:       event.Message.Usage.InputTokens,
 					inputCacheRead:   event.Message.Usage.CacheReadInputTokens,
 					inputCacheCreate: event.Message.Usage.CacheCreationInputTokens,
-					output:           event.Message.Usage.OutputTokens,
+					outputOther:      event.Message.Usage.OutputTokens,
 				}
 			}
 		}
@@ -250,7 +250,7 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 		usage.InputOther += u.inputOther
 		usage.InputCacheRead += u.inputCacheRead
 		usage.InputCacheCreate += u.inputCacheCreate
-		usage.Output += u.output
+		usage.OutputOther += u.outputOther
 	}
 
 	// Use filename (without extension) as session ID fallback
