@@ -37,7 +37,7 @@ npm/node_modules/
 npm/vendor/codetok
 npm/vendor/codetok.exe
 
-# local agent tooling artifacts
+# Local agent tooling artifacts
 .claude/commands/
 .claude/skills/openspec-apply-change/
 .claude/skills/openspec-archive-change/
@@ -49,4 +49,13 @@ npm/vendor/codetok.exe
 .claude/skills/openspec-onboard/
 .claude/skills/openspec-sync-specs/
 .claude/skills/openspec-verify-change/
-.codex/
+.codex/skills/openspec-apply-change/
+.codex/skills/openspec-archive-change/
+.codex/skills/openspec-bulk-archive-change/
+.codex/skills/openspec-continue-change/
+.codex/skills/openspec-explore/
+.codex/skills/openspec-ff-change/
+.codex/skills/openspec-new-change/
+.codex/skills/openspec-onboard/
+.codex/skills/openspec-sync-specs/
+.codex/skills/openspec-verify-change/
