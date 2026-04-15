@@ -12,7 +12,7 @@ LDFLAGS := -s -w \
 
 GO := go
 GOFLAGS := -trimpath
-GOLANGCI_LINT_VERSION := v1.64.8
+GOLANGCI_LINT_VERSION := v2.8.0
 
 .PHONY: all build run clean test lint fmt vet tidy help
 
