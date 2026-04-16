@@ -43,6 +43,7 @@ func init() {
 	dailyCmd.Flags().String("until", "", "End date filter (format: 2006-01-02)")
 	dailyCmd.Flags().Int("days", defaultDailyDays, "Lookback window in days when --since/--until are not set")
 	dailyCmd.Flags().Bool("all", false, "Include all historical sessions")
+	dailyCmd.Flags().String("timezone", "", "Timezone for date filters (IANA name, default: local)")
 	dailyCmd.Flags().String("unit", defaultTokenUnit, "Token display unit for dashboard output: raw, k, m, g")
 	dailyCmd.Flags().String("group-by", defaultGroupBy, "Group by dimension for aggregation: cli, model")
 	dailyCmd.Flags().Int("top", defaultTopN, "Top N groups to show in dashboard share section")
@@ -66,6 +67,7 @@ func runDaily(cmd *cobra.Command, args []string) error {
 	untilStr, _ := cmd.Flags().GetString("until")
 	days, _ := cmd.Flags().GetInt("days")
 	allHistory, _ := cmd.Flags().GetBool("all")
+	timezoneStr, _ := cmd.Flags().GetString("timezone")
 	unitStr, _ := cmd.Flags().GetString("unit")
 	groupByStr, _ := cmd.Flags().GetString("group-by")
 	topN, _ := cmd.Flags().GetInt("top")
@@ -75,6 +77,10 @@ func runDaily(cmd *cobra.Command, args []string) error {
 	}
 	if !jsonOutput && topN < 1 {
 		return fmt.Errorf("invalid --top: must be >= 1")
+	}
+	loc, err := resolveTimezone(timezoneStr)
+	if err != nil {
+		return err
 	}
 
 	allSessions, err := collectSessions(cmd)
@@ -89,6 +95,7 @@ func runDaily(cmd *cobra.Command, args []string) error {
 		allHistory,
 		cmd.Flags().Changed("days"),
 		time.Now(),
+		loc,
 	)
 	if err != nil {
 		return err
@@ -113,6 +120,18 @@ func runDaily(cmd *cobra.Command, args []string) error {
 
 	printDailyDashboard(daily, unit, groupBy, topN)
 	return nil
+}
+
+func resolveTimezone(timezone string) (*time.Location, error) {
+	timezone = strings.TrimSpace(timezone)
+	if timezone == "" {
+		return time.Local, nil
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --timezone: %q", timezone)
+	}
+	return loc, nil
 }
 
 func resolveGroupBy(groupBy string) (stats.AggregateDimension, error) {
@@ -185,7 +204,11 @@ func resolveDailyDateRange(
 	days int,
 	allHistory, daysChanged bool,
 	now time.Time,
+	loc *time.Location,
 ) (time.Time, time.Time, error) {
+	if loc == nil {
+		loc = time.Local
+	}
 	if allHistory {
 		if sinceStr != "" || untilStr != "" || daysChanged {
 			return time.Time{}, time.Time{}, fmt.Errorf("--all cannot be used with --days, --since, or --until")
@@ -202,18 +225,18 @@ func resolveDailyDateRange(
 		err   error
 	)
 	if sinceStr != "" {
-		since, err = time.Parse("2006-01-02", sinceStr)
+		since, err = time.ParseInLocation("2006-01-02", sinceStr, loc)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("invalid --since date: %w", err)
 		}
 	}
 	if untilStr != "" {
-		until, err = time.Parse("2006-01-02", untilStr)
+		until, err = time.ParseInLocation("2006-01-02", untilStr, loc)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("invalid --until date: %w", err)
 		}
 		// Include the entire "until" day
-		until = until.Add(24*time.Hour - time.Nanosecond)
+		until = time.Date(until.Year(), until.Month(), until.Day()+1, 0, 0, 0, 0, loc).Add(-time.Nanosecond)
 	}
 	if sinceStr != "" || untilStr != "" {
 		if daysChanged {
@@ -222,8 +245,8 @@ func resolveDailyDateRange(
 		return since, until, nil
 	}
 
-	utcNow := now.UTC()
-	startOfToday := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
+	localNow := now.In(loc)
+	startOfToday := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
 	since = startOfToday.AddDate(0, 0, -(days - 1))
 	return since, time.Time{}, nil
 }
