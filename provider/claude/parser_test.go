@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestParseClaudeSession_ValidData(t *testing.T) {
@@ -187,6 +188,262 @@ func TestParseClaudeSession_Dedup_PartialIDs(t *testing.T) {
 	if info.TokenUsage.Output != 90 {
 		t.Errorf("Output = %d, want 90", info.TokenUsage.Output)
 	}
+}
+
+func TestParseClaudeUsageEvents_UsesAssistantTimestampAndMetadata(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "session.jsonl")
+	content := `{"type":"user","userType":"external","sessionId":"s1","timestamp":"2026-04-15T23:50:00Z","message":{"role":"user","content":"Investigate token attribution"}}
+{"type":"assistant","requestId":"req-A","sessionId":"s1","timestamp":"2026-04-16T00:10:00Z","message":{"id":"msg-A","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"Done"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":40}}}
+`
+	if err := os.WriteFile(sessionPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseUsageEvents(sessionPath, "project-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+
+	got := events[0]
+	wantAssistantTS := mustParseTime(t, "2026-04-16T00:10:00Z")
+	if !got.Timestamp.Equal(wantAssistantTS) {
+		t.Errorf("Timestamp = %s, want assistant timestamp %s", got.Timestamp, wantAssistantTS)
+	}
+	if got.Timestamp.Equal(mustParseTime(t, "2026-04-15T23:50:00Z")) {
+		t.Error("Timestamp should not use the user/session start timestamp")
+	}
+	if got.ProviderName != "claude" {
+		t.Errorf("ProviderName = %q, want claude", got.ProviderName)
+	}
+	if got.SessionID != "s1" {
+		t.Errorf("SessionID = %q, want s1", got.SessionID)
+	}
+	if got.ModelName != "claude-sonnet-4-6" {
+		t.Errorf("ModelName = %q, want claude-sonnet-4-6", got.ModelName)
+	}
+	if got.Title != "Investigate token attribution" {
+		t.Errorf("Title = %q, want first user text", got.Title)
+	}
+	if got.WorkDirHash != "project-x" {
+		t.Errorf("WorkDirHash = %q, want project-x", got.WorkDirHash)
+	}
+	if got.SourcePath != sessionPath {
+		t.Errorf("SourcePath = %q, want %q", got.SourcePath, sessionPath)
+	}
+	if got.EventID != "msg-A:req-A" {
+		t.Errorf("EventID = %q, want msg-A:req-A", got.EventID)
+	}
+	if got.TokenUsage.InputOther != 100 {
+		t.Errorf("InputOther = %d, want 100", got.TokenUsage.InputOther)
+	}
+	if got.TokenUsage.InputCacheCreate != 20 {
+		t.Errorf("InputCacheCreate = %d, want 20", got.TokenUsage.InputCacheCreate)
+	}
+	if got.TokenUsage.InputCacheRead != 30 {
+		t.Errorf("InputCacheRead = %d, want 30", got.TokenUsage.InputCacheRead)
+	}
+	if got.TokenUsage.Output != 40 {
+		t.Errorf("Output = %d, want 40", got.TokenUsage.Output)
+	}
+}
+
+func TestParseClaudeUsageEvents_CrossDayAssistantMessages(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "cross-day.jsonl")
+	content := `{"type":"user","userType":"external","sessionId":"cross-day","timestamp":"2026-04-15T23:45:00Z","message":{"role":"user","content":"Continue overnight"}}
+{"type":"assistant","requestId":"req-1","sessionId":"cross-day","timestamp":"2026-04-15T23:55:00Z","message":{"id":"msg-1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"First"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":1,"cache_read_input_tokens":2,"output_tokens":3}}}
+{"type":"assistant","requestId":"req-2","sessionId":"cross-day","timestamp":"2026-04-16T00:05:00Z","message":{"id":"msg-2","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"Second"}],"usage":{"input_tokens":20,"cache_creation_input_tokens":4,"cache_read_input_tokens":5,"output_tokens":6}}}
+`
+	if err := os.WriteFile(sessionPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseUsageEvents(sessionPath, "project-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+
+	if events[0].SessionID != "cross-day" || events[1].SessionID != "cross-day" {
+		t.Fatalf("events should keep the same session ID: %#v", events)
+	}
+	if !events[0].Timestamp.Equal(mustParseTime(t, "2026-04-15T23:55:00Z")) {
+		t.Errorf("first event timestamp = %s, want 2026-04-15T23:55:00Z", events[0].Timestamp)
+	}
+	if !events[1].Timestamp.Equal(mustParseTime(t, "2026-04-16T00:05:00Z")) {
+		t.Errorf("second event timestamp = %s, want 2026-04-16T00:05:00Z", events[1].Timestamp)
+	}
+	if events[0].TokenUsage.Total() != 16 {
+		t.Errorf("first total = %d, want 16", events[0].TokenUsage.Total())
+	}
+	if events[1].TokenUsage.Total() != 35 {
+		t.Errorf("second total = %d, want 35", events[1].TokenUsage.Total())
+	}
+}
+
+func TestParseClaudeUsageEvents_DedupStreamingKeepsLatestUsage(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "dedup-events.jsonl")
+	content := `{"type":"user","userType":"external","sessionId":"s1","timestamp":"2026-04-16T09:59:00Z","message":{"role":"user","content":"Stream"}}
+{"type":"assistant","requestId":"req-A","sessionId":"s1","timestamp":"2026-04-16T10:00:00Z","message":{"id":"msg-A","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"partial"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":5}}}
+{"type":"assistant","requestId":"req-A","sessionId":"s1","timestamp":"2026-04-16T10:00:01Z","message":{"id":"msg-A","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"partial"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":15}}}
+{"type":"assistant","requestId":"req-A","sessionId":"s1","timestamp":"2026-04-16T10:00:02Z","message":{"id":"msg-A","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"final"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":30}}}
+{"type":"assistant","requestId":"req-B","sessionId":"s1","timestamp":"2026-04-16T10:02:00Z","message":{"id":"msg-B","model":"claude-haiku-4-5","role":"assistant","content":[{"type":"text","text":"second"}],"usage":{"input_tokens":200,"cache_creation_input_tokens":20,"cache_read_input_tokens":300,"output_tokens":40}}}
+`
+	if err := os.WriteFile(sessionPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseUsageEvents(sessionPath, "project-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+
+	if events[0].EventID != "msg-A:req-A" {
+		t.Fatalf("first EventID = %q, want msg-A:req-A", events[0].EventID)
+	}
+	if !events[0].Timestamp.Equal(mustParseTime(t, "2026-04-16T10:00:02Z")) {
+		t.Errorf("deduped timestamp = %s, want latest streaming timestamp", events[0].Timestamp)
+	}
+	if events[0].TokenUsage.Output != 30 {
+		t.Errorf("deduped Output = %d, want latest 30", events[0].TokenUsage.Output)
+	}
+	if events[0].TokenUsage.Total() != 190 {
+		t.Errorf("deduped total = %d, want 190", events[0].TokenUsage.Total())
+	}
+	if events[1].EventID != "msg-B:req-B" {
+		t.Fatalf("second EventID = %q, want msg-B:req-B", events[1].EventID)
+	}
+	if events[1].ModelName != "claude-haiku-4-5" {
+		t.Errorf("second ModelName = %q, want claude-haiku-4-5", events[1].ModelName)
+	}
+}
+
+func TestParseClaudeUsageEvents_DedupUsesLatestFileRecord(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "dedup-file-order.jsonl")
+	content := `{"type":"assistant","requestId":"req-A","sessionId":"s1","timestamp":"2026-04-16T10:00:02Z","message":{"id":"msg-A","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"first final-looking row"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":100,"output_tokens":5}}}
+{"type":"assistant","requestId":"req-A","sessionId":"s1","timestamp":"2026-04-16T10:00:01Z","message":{"id":"msg-A","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"later file row"}],"usage":{"input_tokens":60,"cache_creation_input_tokens":11,"cache_read_input_tokens":101,"output_tokens":30}}}
+`
+	if err := os.WriteFile(sessionPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseUsageEvents(sessionPath, "project-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+
+	got := events[0]
+	if !got.Timestamp.Equal(mustParseTime(t, "2026-04-16T10:00:01Z")) {
+		t.Errorf("Timestamp = %s, want latest file record timestamp", got.Timestamp)
+	}
+	if got.TokenUsage.InputOther != 60 {
+		t.Errorf("InputOther = %d, want latest file record 60", got.TokenUsage.InputOther)
+	}
+	if got.TokenUsage.InputCacheCreate != 11 {
+		t.Errorf("InputCacheCreate = %d, want latest file record 11", got.TokenUsage.InputCacheCreate)
+	}
+	if got.TokenUsage.InputCacheRead != 101 {
+		t.Errorf("InputCacheRead = %d, want latest file record 101", got.TokenUsage.InputCacheRead)
+	}
+	if got.TokenUsage.Output != 30 {
+		t.Errorf("Output = %d, want latest file record 30", got.TokenUsage.Output)
+	}
+}
+
+func TestParseClaudeUsageEvents_NoIDsRemainUnique(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "no-ids-events.jsonl")
+	content := `{"type":"assistant","sessionId":"s1","timestamp":"2026-04-16T10:00:00Z","message":{"role":"assistant","content":[{"type":"text","text":"a"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}}}
+{"type":"assistant","sessionId":"s1","timestamp":"2026-04-16T10:01:00Z","message":{"role":"assistant","content":[{"type":"text","text":"b"}],"usage":{"input_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}
+`
+	if err := os.WriteFile(sessionPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseUsageEvents(sessionPath, "project-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want both no-ID entries to stay unique", len(events))
+	}
+	if events[0].EventID == "" || events[1].EventID == "" || events[0].EventID == events[1].EventID {
+		t.Fatalf("events should have distinct non-empty fallback IDs: %#v", events)
+	}
+	if events[0].TokenUsage.Total() != 15 {
+		t.Errorf("first total = %d, want 15", events[0].TokenUsage.Total())
+	}
+	if events[1].TokenUsage.Total() != 30 {
+		t.Errorf("second total = %d, want 30", events[1].TokenUsage.Total())
+	}
+}
+
+func TestCollectClaudeUsageEvents_IncludesSubagentPaths(t *testing.T) {
+	baseDir := t.TempDir()
+	projectDir := filepath.Join(baseDir, "project-x")
+	subagentsDir := filepath.Join(projectDir, "session-abc", "subagents")
+	if err := os.MkdirAll(subagentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	parentPath := filepath.Join(projectDir, "session-abc.jsonl")
+	parentContent := `{"type":"assistant","requestId":"req-parent","sessionId":"session-abc","timestamp":"2026-04-16T10:00:00Z","message":{"id":"msg-parent","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"parent"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":30}}}
+`
+	if err := os.WriteFile(parentPath, []byte(parentContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	subagentPath := filepath.Join(subagentsDir, "agent-a123.jsonl")
+	subagentContent := `{"type":"assistant","requestId":"req-sub","sessionId":"session-abc","timestamp":"2026-04-16T10:02:00Z","message":{"id":"msg-sub","model":"claude-haiku-4-5","role":"assistant","content":[{"type":"text","text":"sub"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":20}}}
+`
+	if err := os.WriteFile(subagentPath, []byte(subagentContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := (&Provider{}).CollectUsageEvents(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want parent + subagent", len(events))
+	}
+
+	byPath := make(map[string]bool)
+	for _, event := range events {
+		byPath[event.SourcePath] = true
+		if event.WorkDirHash != "project-x" {
+			t.Errorf("WorkDirHash = %q, want project-x", event.WorkDirHash)
+		}
+	}
+	if !byPath[parentPath] {
+		t.Errorf("missing parent event source %q in %#v", parentPath, events)
+	}
+	if !byPath[subagentPath] {
+		t.Errorf("missing subagent event source %q in %#v", subagentPath, events)
+	}
+}
+
+func mustParseTime(t *testing.T, value string) time.Time {
+	t.Helper()
+	ts, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		t.Fatalf("parse time %q: %v", value, err)
+	}
+	return ts
 }
 
 func TestParseClaudeSession_EmptyFile(t *testing.T) {
