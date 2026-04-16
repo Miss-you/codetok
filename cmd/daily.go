@@ -62,6 +62,10 @@ func providerDirFlag(name string) string {
 }
 
 func runDaily(cmd *cobra.Command, args []string) error {
+	return runDailyWithProviders(cmd, args, provider.Registry(), time.Now())
+}
+
+func runDailyWithProviders(cmd *cobra.Command, args []string, providers []provider.Provider, now time.Time) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	sinceStr, _ := cmd.Flags().GetString("since")
 	untilStr, _ := cmd.Flags().GetString("until")
@@ -83,7 +87,7 @@ func runDaily(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	allSessions, err := collectSessions(cmd)
+	allEvents, err := collectUsageEventsFromProviders(cmd, providers)
 	if err != nil {
 		return err
 	}
@@ -94,15 +98,16 @@ func runDaily(cmd *cobra.Command, args []string) error {
 		days,
 		allHistory,
 		cmd.Flags().Changed("days"),
-		time.Now(),
+		now,
 		loc,
 	)
 	if err != nil {
 		return err
 	}
 
-	allSessions = stats.FilterByDateRange(allSessions, since, until)
-	daily := stats.AggregateByDayWithDimension(allSessions, groupBy)
+	sinceDate, untilDate := dailyEventFilterDates(since, until, loc)
+	allEvents = stats.FilterEventsByDateRange(allEvents, sinceDate, untilDate, loc)
+	daily := stats.AggregateEventsByDayWithDimension(allEvents, groupBy, loc)
 
 	if jsonOutput {
 		if daily == nil {
@@ -120,6 +125,20 @@ func runDaily(cmd *cobra.Command, args []string) error {
 
 	printDailyDashboard(daily, unit, groupBy, topN)
 	return nil
+}
+
+func dailyEventFilterDates(since, until time.Time, loc *time.Location) (string, string) {
+	if loc == nil {
+		loc = time.Local
+	}
+	var sinceDate, untilDate string
+	if !since.IsZero() {
+		sinceDate = since.In(loc).Format("2006-01-02")
+	}
+	if !until.IsZero() {
+		untilDate = until.In(loc).Format("2006-01-02")
+	}
+	return sinceDate, untilDate
 }
 
 func resolveTimezone(timezone string) (*time.Location, error) {

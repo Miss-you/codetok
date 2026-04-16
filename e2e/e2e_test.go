@@ -608,9 +608,11 @@ func TestClaudeSubagentSessions_DailyOutput(t *testing.T) {
 		t.Fatalf("expected 1 daily entry, got %d: %s", len(daily), output)
 	}
 
-	// 2 sessions on the same day
-	if daily[0].Sessions != 2 {
-		t.Errorf("expected 2 sessions in daily, got %d", daily[0].Sessions)
+	// Daily event aggregation counts distinct session IDs per day/group. The
+	// parent and subagent files share session-main, so usage is combined into
+	// one contributing session while preserving both token totals.
+	if daily[0].Sessions != 1 {
+		t.Errorf("expected 1 distinct session in daily, got %d", daily[0].Sessions)
 	}
 	if daily[0].TokenUsage.Total() != 540 {
 		t.Errorf("expected 540 total tokens, got %d", daily[0].TokenUsage.Total())

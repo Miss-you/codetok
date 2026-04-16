@@ -301,6 +301,259 @@ func TestRunDaily_JSONIgnoresInvalidTop(t *testing.T) {
 	}
 }
 
+func TestRunDaily_JSONAggregatesUsageEventsByEventDate(t *testing.T) {
+	eventProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "codex"},
+		events: []provider.UsageEvent{
+			{
+				ProviderName: "codex",
+				ModelName:    "gpt-5.4",
+				SessionID:    "same-session",
+				Timestamp:    time.Date(2026, 4, 15, 23, 50, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 100, Output: 10},
+			},
+			{
+				ProviderName: "codex",
+				ModelName:    "gpt-5.4",
+				SessionID:    "same-session",
+				Timestamp:    time.Date(2026, 4, 16, 0, 10, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 200, Output: 20},
+			},
+		},
+	}
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("all", "true"); err != nil {
+		t.Fatalf("setting --all: %v", err)
+	}
+	if err := cmd.Flags().Set("timezone", "UTC"); err != nil {
+		t.Fatalf("setting --timezone: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runDailyWithProviders(cmd, nil, []provider.Provider{eventProvider}, time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatalf("runDailyWithProviders returned error: %v", err)
+		}
+	})
+
+	got := decodeDailyJSON(t, output)
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, want 2: %#v", len(got), got)
+	}
+	if got[0].Date != "2026-04-15" || got[0].Sessions != 1 || got[0].TokenUsage.Total() != 110 {
+		t.Fatalf("first row mismatch: %#v", got[0])
+	}
+	if got[0].ProviderName != "codex" || got[0].GroupBy != "cli" || got[0].Group != "codex" {
+		t.Fatalf("first row grouping mismatch: %#v", got[0])
+	}
+	if got[1].Date != "2026-04-16" || got[1].Sessions != 1 || got[1].TokenUsage.Total() != 220 {
+		t.Fatalf("second row mismatch: %#v", got[1])
+	}
+}
+
+func TestRunDaily_JSONTimezoneChangesEventDateKeys(t *testing.T) {
+	event := provider.UsageEvent{
+		ProviderName: "codex",
+		ModelName:    "gpt-5.4",
+		SessionID:    "timezone-session",
+		Timestamp:    time.Date(2026, 4, 15, 18, 0, 0, 0, time.UTC),
+		TokenUsage:   provider.TokenUsage{InputOther: 1},
+	}
+
+	run := func(timezone string) []provider.DailyStats {
+		cmd := newDailyTestCommand()
+		if err := cmd.Flags().Set("json", "true"); err != nil {
+			t.Fatalf("setting --json: %v", err)
+		}
+		if err := cmd.Flags().Set("all", "true"); err != nil {
+			t.Fatalf("setting --all: %v", err)
+		}
+		if err := cmd.Flags().Set("timezone", timezone); err != nil {
+			t.Fatalf("setting --timezone: %v", err)
+		}
+		eventProvider := &collectTestUsageEventProvider{
+			collectTestProvider: collectTestProvider{name: "codex"},
+			events:              []provider.UsageEvent{event},
+		}
+
+		output := captureStdout(t, func() {
+			if err := runDailyWithProviders(cmd, nil, []provider.Provider{eventProvider}, time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)); err != nil {
+				t.Fatalf("runDailyWithProviders returned error: %v", err)
+			}
+		})
+		return decodeDailyJSON(t, output)
+	}
+
+	gotUTC := run("UTC")
+	gotShanghai := run("Asia/Shanghai")
+
+	if len(gotUTC) != 1 || gotUTC[0].Date != "2026-04-15" {
+		t.Fatalf("UTC rows = %#v, want one 2026-04-15 row", gotUTC)
+	}
+	if len(gotShanghai) != 1 || gotShanghai[0].Date != "2026-04-16" {
+		t.Fatalf("Shanghai rows = %#v, want one 2026-04-16 row", gotShanghai)
+	}
+}
+
+func TestRunDaily_DefaultWindowFiltersByLocalEventDate(t *testing.T) {
+	eventProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "codex"},
+		events: []provider.UsageEvent{
+			{
+				ProviderName: "codex",
+				SessionID:    "outside-local-window",
+				Timestamp:    time.Date(2026, 4, 9, 15, 59, 59, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 100},
+			},
+			{
+				ProviderName: "codex",
+				SessionID:    "inside-local-window",
+				Timestamp:    time.Date(2026, 4, 9, 16, 0, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 200},
+			},
+		},
+	}
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("timezone", "Asia/Shanghai"); err != nil {
+		t.Fatalf("setting --timezone: %v", err)
+	}
+	now := time.Date(2026, 4, 16, 1, 0, 0, 0, mustLoadLocation(t, "Asia/Shanghai"))
+
+	output := captureStdout(t, func() {
+		if err := runDailyWithProviders(cmd, nil, []provider.Provider{eventProvider}, now); err != nil {
+			t.Fatalf("runDailyWithProviders returned error: %v", err)
+		}
+	})
+
+	got := decodeDailyJSON(t, output)
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want one in-window row: %#v", len(got), got)
+	}
+	if got[0].Date != "2026-04-10" {
+		t.Fatalf("row = %#v, want 2026-04-10 aggregate row", got[0])
+	}
+	if got[0].TokenUsage.Total() != 200 {
+		t.Fatalf("total = %d, want only inside event total 200", got[0].TokenUsage.Total())
+	}
+}
+
+func TestRunDaily_ExplicitDateRangeFiltersByLocalEventDate(t *testing.T) {
+	eventProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "codex"},
+		events: []provider.UsageEvent{
+			{
+				ProviderName: "codex",
+				SessionID:    "before-local-day",
+				Timestamp:    time.Date(2026, 4, 15, 15, 59, 59, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 100},
+			},
+			{
+				ProviderName: "codex",
+				SessionID:    "start-local-day",
+				Timestamp:    time.Date(2026, 4, 15, 16, 0, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 200},
+			},
+			{
+				ProviderName: "codex",
+				SessionID:    "end-local-day",
+				Timestamp:    time.Date(2026, 4, 16, 15, 59, 59, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 300},
+			},
+			{
+				ProviderName: "codex",
+				SessionID:    "after-local-day",
+				Timestamp:    time.Date(2026, 4, 16, 16, 0, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 400},
+			},
+		},
+	}
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("since", "2026-04-16"); err != nil {
+		t.Fatalf("setting --since: %v", err)
+	}
+	if err := cmd.Flags().Set("until", "2026-04-16"); err != nil {
+		t.Fatalf("setting --until: %v", err)
+	}
+	if err := cmd.Flags().Set("timezone", "Asia/Shanghai"); err != nil {
+		t.Fatalf("setting --timezone: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runDailyWithProviders(cmd, nil, []provider.Provider{eventProvider}, time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatalf("runDailyWithProviders returned error: %v", err)
+		}
+	})
+
+	got := decodeDailyJSON(t, output)
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want one 2026-04-16 row: %#v", len(got), got)
+	}
+	if got[0].Date != "2026-04-16" || got[0].TokenUsage.Total() != 500 || got[0].Sessions != 2 {
+		t.Fatalf("row = %#v, want only two events on Shanghai 2026-04-16", got[0])
+	}
+}
+
+func TestRunDaily_JSONModelGroupingUsesUsageEventsAcrossProviders(t *testing.T) {
+	codexProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "codex"},
+		events: []provider.UsageEvent{{
+			ProviderName: "codex",
+			ModelName:    "shared-model",
+			SessionID:    "codex-session",
+			Timestamp:    time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC),
+			TokenUsage:   provider.TokenUsage{InputOther: 25},
+		}},
+	}
+	claudeProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "claude"},
+		events: []provider.UsageEvent{{
+			ProviderName: "claude",
+			ModelName:    "shared-model",
+			SessionID:    "claude-session",
+			Timestamp:    time.Date(2026, 4, 16, 11, 0, 0, 0, time.UTC),
+			TokenUsage:   provider.TokenUsage{InputOther: 75},
+		}},
+	}
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("all", "true"); err != nil {
+		t.Fatalf("setting --all: %v", err)
+	}
+	if err := cmd.Flags().Set("group-by", "model"); err != nil {
+		t.Fatalf("setting --group-by: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runDailyWithProviders(cmd, nil, []provider.Provider{codexProvider, claudeProvider}, time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatalf("runDailyWithProviders returned error: %v", err)
+		}
+	})
+
+	got := decodeDailyJSON(t, output)
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1: %#v", len(got), got)
+	}
+	if got[0].ProviderName != "" || got[0].GroupBy != "model" || got[0].Group != "shared-model" {
+		t.Fatalf("grouping mismatch: %#v", got[0])
+	}
+	if strings.Join(got[0].Providers, ",") != "claude,codex" {
+		t.Fatalf("providers = %#v, want [claude codex]", got[0].Providers)
+	}
+	if got[0].TokenUsage.Total() != 100 || got[0].Sessions != 2 {
+		t.Fatalf("aggregate mismatch: %#v", got[0])
+	}
+}
+
 func TestPrintDailyDashboard_ThreeSectionLayout_Model(t *testing.T) {
 	daily := []provider.DailyStats{
 		{
@@ -436,7 +689,7 @@ func assertContainsAll(t *testing.T, text string, values ...string) {
 	}
 }
 
-func captureStdout(t *testing.T, fn func()) string {
+func captureStdout(t *testing.T, fn func()) (output string) {
 	t.Helper()
 	oldStdout := os.Stdout
 	r, w, err := os.Pipe()
@@ -445,6 +698,12 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	os.Stdout = w
 	done := make(chan string, 1)
+	defer func() {
+		_ = w.Close()
+		os.Stdout = oldStdout
+		output = <-done
+		_ = r.Close()
+	}()
 	go func() {
 		var buf bytes.Buffer
 		_, _ = io.Copy(&buf, r)
@@ -452,12 +711,16 @@ func captureStdout(t *testing.T, fn func()) string {
 	}()
 
 	fn()
-
-	_ = w.Close()
-	os.Stdout = oldStdout
-	output := <-done
-	_ = r.Close()
 	return output
+}
+
+func decodeDailyJSON(t *testing.T, output string) []provider.DailyStats {
+	t.Helper()
+	var got []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("decoding daily json: %v\noutput: %s", err, output)
+	}
+	return got
 }
 
 func newDailyTestCommand() *cobra.Command {
