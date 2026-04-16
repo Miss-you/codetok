@@ -71,6 +71,49 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 	return sessions, nil
 }
 
+// CollectUsageEvents scans Cursor CSV exports and returns one timestamped usage
+// event per valid CSV row.
+func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
+	paths, err := resolveCursorCSVPaths(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var events []provider.UsageEvent
+	for _, path := range paths {
+		parsed, err := parseUsageCSV(path)
+		if err != nil {
+			continue
+		}
+		for _, session := range parsed {
+			events = append(events, sessionUsageEvent(path, session))
+		}
+	}
+
+	sort.Slice(events, func(i, j int) bool {
+		if !events[i].Timestamp.Equal(events[j].Timestamp) {
+			return events[i].Timestamp.Before(events[j].Timestamp)
+		}
+		return events[i].SessionID < events[j].SessionID
+	})
+
+	return events, nil
+}
+
+func sessionUsageEvent(sourcePath string, session provider.SessionInfo) provider.UsageEvent {
+	return provider.UsageEvent{
+		ProviderName: session.ProviderName,
+		ModelName:    session.ModelName,
+		SessionID:    session.SessionID,
+		Title:        session.Title,
+		WorkDirHash:  session.WorkDirHash,
+		Timestamp:    session.StartTime,
+		TokenUsage:   session.TokenUsage,
+		SourcePath:   sourcePath,
+		EventID:      session.SessionID,
+	}
+}
+
 func defaultCursorDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

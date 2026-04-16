@@ -5,7 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/miss-you/codetok/provider"
 )
+
+var _ provider.UsageEventProvider = (*Provider)(nil)
 
 func TestParseUsageCSV_ValidExport(t *testing.T) {
 	sessions, err := parseUsageCSV(filepath.Join("testdata", "usage-export.csv"))
@@ -79,6 +83,181 @@ func TestParseUsageCSV_ValidExport(t *testing.T) {
 	}
 	if second.TokenUsage.Total() != 76839 {
 		t.Fatalf("Total = %d, want 76839", second.TokenUsage.Total())
+	}
+}
+
+func TestCollectUsageEvents_ValidExportMapsRowsToEvents(t *testing.T) {
+	baseDir := t.TempDir()
+	path := filepath.Join(baseDir, "usage.csv")
+	content := `Date,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost
+"2026-02-17T10:00:00Z","Included","auto","No","28342","775","105891","21282","999999","0.19"
+"2026-02-18T11:30:00+08:00","On-Demand","gpt-5-codex","No","0","8263","66964","1612","76839","0.03"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Provider{}
+	events, err := p.CollectUsageEvents(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+
+	first := events[0]
+	if first.ProviderName != "cursor" {
+		t.Fatalf("ProviderName = %q, want cursor", first.ProviderName)
+	}
+	if first.SessionID != "usage:1" {
+		t.Fatalf("SessionID = %q, want usage:1", first.SessionID)
+	}
+	if first.EventID != "usage:1" {
+		t.Fatalf("EventID = %q, want usage:1", first.EventID)
+	}
+	if first.SourcePath != path {
+		t.Fatalf("SourcePath = %q, want %q", first.SourcePath, path)
+	}
+	if first.ModelName != "auto" {
+		t.Fatalf("ModelName = %q, want auto", first.ModelName)
+	}
+	if first.Title != "Included auto" {
+		t.Fatalf("Title = %q, want Included auto", first.Title)
+	}
+	wantFirstTimestamp := time.Date(2026, 2, 17, 10, 0, 0, 0, time.UTC)
+	if !first.Timestamp.Equal(wantFirstTimestamp) {
+		t.Fatalf("Timestamp = %v, want %v", first.Timestamp, wantFirstTimestamp)
+	}
+	if first.TokenUsage.InputCacheCreate != 28342 {
+		t.Fatalf("InputCacheCreate = %d, want 28342", first.TokenUsage.InputCacheCreate)
+	}
+	if first.TokenUsage.InputOther != 775 {
+		t.Fatalf("InputOther = %d, want 775", first.TokenUsage.InputOther)
+	}
+	if first.TokenUsage.InputCacheRead != 105891 {
+		t.Fatalf("InputCacheRead = %d, want 105891", first.TokenUsage.InputCacheRead)
+	}
+	if first.TokenUsage.Output != 21282 {
+		t.Fatalf("Output = %d, want 21282", first.TokenUsage.Output)
+	}
+
+	second := events[1]
+	if second.SessionID != "usage:2" {
+		t.Fatalf("second SessionID = %q, want usage:2", second.SessionID)
+	}
+	if second.EventID != "usage:2" {
+		t.Fatalf("second EventID = %q, want usage:2", second.EventID)
+	}
+	if got, want := second.Timestamp.Format(time.RFC3339), "2026-02-18T11:30:00+08:00"; got != want {
+		t.Fatalf("second Timestamp = %q, want %q", got, want)
+	}
+	if second.TokenUsage.Total() != 76839 {
+		t.Fatalf("second Total = %d, want 76839", second.TokenUsage.Total())
+	}
+}
+
+func TestCollectUsageEvents_SkipsInvalidCSVFileAndKeepsDeterministicOrder(t *testing.T) {
+	baseDir := t.TempDir()
+
+	invalid := `Date,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read
+"2026-02-17T10:00:00Z","broken","1","2","3"
+`
+	first := `Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens
+"not-a-date","Included","broken","1","2","3","4"
+"2026-02-21T09:15:00Z","Included","model-b","1","2","3","4"
+`
+	second := `Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens
+"2026-02-20T09:15:00Z","Included","model-a","5","6","7","8"
+"2026-02-21T09:15:00Z","Included","model-c","9","10","11","12"
+`
+
+	if err := os.WriteFile(filepath.Join(baseDir, "zzz-invalid.csv"), []byte(invalid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "bbb.csv"), []byte(first), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "aaa.csv"), []byte(second), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Provider{}
+	events, err := p.CollectUsageEvents(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3", len(events))
+	}
+
+	gotIDs := []string{events[0].SessionID, events[1].SessionID, events[2].SessionID}
+	wantIDs := []string{"aaa:1", "aaa:2", "bbb:2"}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Fatalf("sessionIDs[%d] = %q, want %q", i, gotIDs[i], wantIDs[i])
+		}
+	}
+	for _, event := range events {
+		if event.SourcePath == "" {
+			t.Fatalf("event %q has empty SourcePath", event.SessionID)
+		}
+		if event.EventID == "" {
+			t.Fatalf("event %q has empty EventID", event.SessionID)
+		}
+	}
+}
+
+func TestCollectUsageEvents_DefaultRootAndExplicitDirRules(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	root := filepath.Join(home, ".codetok", "cursor")
+	writeCursorCSVFixture(t, filepath.Join(root, "legacy.csv"),
+		`"2026-02-17T10:00:00Z","Included","legacy-model","1","2","3","4"`,
+	)
+	writeCursorCSVFixture(t, filepath.Join(root, "imports", "manual.csv"),
+		`"2026-02-18T10:00:00Z","Included","manual-model","5","6","7","8"`,
+	)
+	writeCursorCSVFixture(t, filepath.Join(root, "synced", "cached.csv"),
+		`"2026-02-19T10:00:00Z","Included","synced-model","9","10","11","12"`,
+	)
+	writeCursorCSVFixture(t, filepath.Join(root, "archive", "ignored.csv"),
+		`"2026-02-20T10:00:00Z","Included","archived-model","13","14","15","16"`,
+	)
+
+	explicitDir := t.TempDir()
+	writeCursorCSVFixture(t, filepath.Join(explicitDir, "custom.csv"),
+		`"2026-02-21T10:00:00Z","Included","custom-model","17","18","19","20"`,
+	)
+
+	p := &Provider{}
+	defaultEvents, err := p.CollectUsageEvents("")
+	if err != nil {
+		t.Fatalf("default root unexpected error: %v", err)
+	}
+	if len(defaultEvents) != 3 {
+		t.Fatalf("default root got %d events, want 3", len(defaultEvents))
+	}
+	gotDefaultIDs := []string{defaultEvents[0].SessionID, defaultEvents[1].SessionID, defaultEvents[2].SessionID}
+	wantDefaultIDs := []string{"legacy:1", "manual:1", "cached:1"}
+	for i := range wantDefaultIDs {
+		if gotDefaultIDs[i] != wantDefaultIDs[i] {
+			t.Fatalf("default sessionIDs[%d] = %q, want %q", i, gotDefaultIDs[i], wantDefaultIDs[i])
+		}
+	}
+
+	explicitEvents, err := p.CollectUsageEvents(explicitDir)
+	if err != nil {
+		t.Fatalf("explicit dir unexpected error: %v", err)
+	}
+	if len(explicitEvents) != 1 {
+		t.Fatalf("explicit dir got %d events, want 1", len(explicitEvents))
+	}
+	if explicitEvents[0].SessionID != "custom:1" {
+		t.Fatalf("explicit SessionID = %q, want custom:1", explicitEvents[0].SessionID)
 	}
 }
 
