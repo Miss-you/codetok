@@ -3,6 +3,7 @@ package codex
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,26 +73,71 @@ var codexModelPaths = [][]string{
 
 // tokenCountInfo holds the token_count info field.
 type tokenCountInfo struct {
-	TotalTokenUsage struct {
-		InputTokens       int `json:"input_tokens"`
-		CachedInputTokens int `json:"cached_input_tokens"`
-		OutputTokens      int `json:"output_tokens"`
-		TotalTokens       int `json:"total_tokens"`
-	} `json:"total_token_usage"`
+	LastTokenUsage  *codexTokenUsage `json:"last_token_usage"`
+	TotalTokenUsage *codexTokenUsage `json:"total_token_usage"`
+}
+
+type codexTokenUsage struct {
+	InputTokens           int `json:"input_tokens"`
+	CachedInputTokens     int `json:"cached_input_tokens"`
+	OutputTokens          int `json:"output_tokens"`
+	ReasoningOutputTokens int `json:"reasoning_output_tokens"`
+	TotalTokens           int `json:"total_tokens"`
+}
+
+func (u codexTokenUsage) toProviderTokenUsage() provider.TokenUsage {
+	return provider.TokenUsage{
+		InputOther:     u.InputTokens - u.CachedInputTokens,
+		InputCacheRead: u.CachedInputTokens,
+		Output:         u.OutputTokens,
+	}
 }
 
 // CollectSessions scans baseDir for Codex session files and returns session info.
 // The expected directory layout is: baseDir/<year>/<month>/<day>/rollout-*.jsonl
 func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, error) {
-	if baseDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		baseDir = filepath.Join(home, ".codex", "sessions")
+	paths, err := collectCodexSessionPaths(baseDir)
+	if err != nil {
+		return nil, err
 	}
 
-	// Phase 1: Walk directories, collect all session file paths (sequential, fast)
+	// Parse all sessions in parallel.
+	sessions := provider.ParseParallel(paths, 0, func(path string) (provider.SessionInfo, error) {
+		return parseCodexSession(path)
+	})
+
+	return sessions, nil
+}
+
+func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
+	paths, err := collectCodexSessionPaths(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	return provider.ParseUsageEventsParallel(paths, 0, parseCodexUsageEvents), nil
+}
+
+func resolveCodexSessionsDir(baseDir string) (string, error) {
+	if baseDir != "" {
+		return baseDir, nil
+	}
+	if codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME")); codexHome != "" {
+		return filepath.Join(codexHome, "sessions"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".codex", "sessions"), nil
+}
+
+func collectCodexSessionPaths(baseDir string) ([]string, error) {
+	baseDir, err := resolveCodexSessionsDir(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
 	var paths []string
 
 	years, err := os.ReadDir(baseDir)
@@ -142,12 +188,7 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 		}
 	}
 
-	// Phase 2: Parse all sessions in parallel
-	sessions := provider.ParseParallel(paths, 0, func(path string) (provider.SessionInfo, error) {
-		return parseCodexSession(path)
-	})
-
-	return sessions, nil
+	return paths, nil
 }
 
 // parseCodexSession parses a single Codex rollout JSONL file.
@@ -166,7 +207,9 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 	// Increase buffer size for long lines
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
-	var lastTokenUsage *provider.TokenUsage
+	var usage provider.TokenUsage
+	var hasUsage bool
+	var previousTotal *codexTokenUsage
 	var startTime, endTime time.Time
 	var turns int
 
@@ -201,8 +244,10 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 			if err := json.Unmarshal(event.Payload, &meta); err != nil {
 				continue
 			}
-			info.SessionID = meta.ID
-			if meta.Timestamp != "" {
+			if info.SessionID == "" {
+				info.SessionID = meta.ID
+			}
+			if meta.Timestamp != "" && startTime.IsZero() {
 				ts, err := time.Parse(time.RFC3339Nano, meta.Timestamp)
 				if err == nil {
 					startTime = ts
@@ -245,15 +290,11 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 				if err := json.Unmarshal(msg.Info, &tci); err != nil {
 					continue
 				}
-				tu := tci.TotalTokenUsage
-				// Cumulative: take the latest value (overwrite)
-				usage := provider.TokenUsage{
-					InputOther:     tu.InputTokens - tu.CachedInputTokens,
-					InputCacheRead: tu.CachedInputTokens,
-					Output:         tu.OutputTokens,
-					// Codex doesn't report InputCacheCreate
+				delta, ok := codexUsageDelta(tci, &previousTotal)
+				if ok && delta.Total() != 0 {
+					addCodexTokenUsage(&usage, delta)
+					hasUsage = true
 				}
-				lastTokenUsage = &usage
 			}
 
 		default:
@@ -267,14 +308,199 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 		return provider.SessionInfo{}, err
 	}
 
-	if lastTokenUsage != nil {
-		info.TokenUsage = *lastTokenUsage
+	if hasUsage {
+		info.TokenUsage = usage
 	}
 	info.Turns = turns
 	info.StartTime = startTime
 	info.EndTime = endTime
 
 	return info, nil
+}
+
+func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var events []provider.UsageEvent
+	var sessionID string
+	var title string
+	var currentModel string
+	var previousTotal *codexTokenUsage
+	var lineNumber int
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+
+	for scanner.Scan() {
+		lineNumber++
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var event codexEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			continue
+		}
+
+		switch event.Type {
+		case "session_meta":
+			var meta sessionMetaPayload
+			if err := json.Unmarshal(event.Payload, &meta); err != nil {
+				continue
+			}
+			if sessionID == "" && strings.TrimSpace(meta.ID) != "" {
+				sessionID = strings.TrimSpace(meta.ID)
+				for i := range events {
+					events[i].SessionID = sessionID
+				}
+			}
+			if model := extractModelFromRawJSON(event.Payload); model != "" {
+				currentModel = model
+			}
+
+		case "event_msg":
+			var msg eventMsgPayload
+			if err := json.Unmarshal(event.Payload, &msg); err != nil {
+				continue
+			}
+			if model := firstCodexModel(msg.Model, extractModelFromRawJSON(msg.Info), extractModelFromRawJSON(event.Payload)); model != "" {
+				currentModel = model
+			}
+
+			switch msg.Type {
+			case "user_message":
+				if title == "" && strings.TrimSpace(msg.Message) != "" {
+					title = strings.TrimSpace(msg.Message)
+					for i := range events {
+						if events[i].Title == "" {
+							events[i].Title = title
+						}
+					}
+				}
+
+			case "token_count":
+				if msg.Info == nil || string(msg.Info) == "null" {
+					continue
+				}
+				ts, err := time.Parse(time.RFC3339Nano, event.Timestamp)
+				if err != nil {
+					continue
+				}
+				var tci tokenCountInfo
+				if err := json.Unmarshal(msg.Info, &tci); err != nil {
+					continue
+				}
+				usage, ok := codexUsageDelta(tci, &previousTotal)
+				if !ok || usage.Total() == 0 {
+					continue
+				}
+				events = append(events, provider.UsageEvent{
+					ProviderName: "codex",
+					ModelName:    currentModel,
+					SessionID:    firstNonEmptyString(sessionID, path),
+					Title:        title,
+					Timestamp:    ts,
+					TokenUsage:   usage,
+					SourcePath:   path,
+					EventID:      fmt.Sprintf("%s:%d", path, lineNumber),
+				})
+			}
+
+		default:
+			if model := extractModelFromRawJSON(event.Payload); model != "" {
+				currentModel = model
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func codexUsageDelta(info tokenCountInfo, previousTotal **codexTokenUsage) (provider.TokenUsage, bool) {
+	if info.LastTokenUsage != nil {
+		last := *info.LastTokenUsage
+		if info.TotalTokenUsage != nil {
+			total := *info.TotalTokenUsage
+			*previousTotal = &total
+		} else if *previousTotal != nil {
+			total := addCodexRawTokenUsage(**previousTotal, last)
+			*previousTotal = &total
+		} else {
+			total := last
+			*previousTotal = &total
+		}
+		return last.toProviderTokenUsage(), true
+	}
+	if info.TotalTokenUsage == nil {
+		return provider.TokenUsage{}, false
+	}
+
+	total := *info.TotalTokenUsage
+	defer func() {
+		*previousTotal = &total
+	}()
+
+	if *previousTotal == nil || codexTotalDecreased(total, **previousTotal) {
+		return total.toProviderTokenUsage(), true
+	}
+
+	delta := codexTokenUsage{
+		InputTokens:       total.InputTokens - (*previousTotal).InputTokens,
+		CachedInputTokens: total.CachedInputTokens - (*previousTotal).CachedInputTokens,
+		OutputTokens:      total.OutputTokens - (*previousTotal).OutputTokens,
+		TotalTokens:       total.TotalTokens - (*previousTotal).TotalTokens,
+	}
+	return delta.toProviderTokenUsage(), true
+}
+
+func addCodexRawTokenUsage(dst, src codexTokenUsage) codexTokenUsage {
+	return codexTokenUsage{
+		InputTokens:           dst.InputTokens + src.InputTokens,
+		CachedInputTokens:     dst.CachedInputTokens + src.CachedInputTokens,
+		OutputTokens:          dst.OutputTokens + src.OutputTokens,
+		ReasoningOutputTokens: dst.ReasoningOutputTokens + src.ReasoningOutputTokens,
+		TotalTokens:           dst.TotalTokens + src.TotalTokens,
+	}
+}
+
+func codexTotalDecreased(current, previous codexTokenUsage) bool {
+	return current.InputTokens < previous.InputTokens ||
+		current.CachedInputTokens < previous.CachedInputTokens ||
+		current.OutputTokens < previous.OutputTokens ||
+		current.TotalTokens < previous.TotalTokens
+}
+
+func addCodexTokenUsage(dst *provider.TokenUsage, src provider.TokenUsage) {
+	dst.InputOther += src.InputOther
+	dst.Output += src.Output
+	dst.InputCacheRead += src.InputCacheRead
+	dst.InputCacheCreate += src.InputCacheCreate
+}
+
+func firstCodexModel(candidates ...string) string {
+	for _, candidate := range candidates {
+		if isLikelyCodexModelName(candidate) {
+			return strings.TrimSpace(candidate)
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyString(candidates ...string) string {
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) != "" {
+			return strings.TrimSpace(candidate)
+		}
+	}
+	return ""
 }
 
 func extractModelFromRawJSON(raw json.RawMessage) string {
