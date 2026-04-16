@@ -1,0 +1,3 @@
+{"type":"metadata","protocol_version":"1.2"}
+{"timestamp":1776297300.0,"message":{"type":"StatusUpdate","payload":{"model_name":"moonshot-v1-128k","message_id":"kimi-msg-1","token_usage":{"input_other":100,"output":50,"input_cache_read":200,"input_cache_creation":10}}}}
+{"timestamp":1776297900.0,"message":{"type":"StatusUpdate","payload":{"message_id":"kimi-msg-2","token_usage":{"input_other":150,"output":75,"input_cache_read":300,"input_cache_creation":20}}}}

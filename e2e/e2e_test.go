@@ -47,6 +47,16 @@ func cursorTestdataDir(t *testing.T) string {
 	return dir
 }
 
+// crossDayTestdataRoot returns the absolute path to the e2e cross-day fixture root.
+func crossDayTestdataRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.Abs(filepath.Join("testdata", "cross-day"))
+	if err != nil {
+		t.Fatalf("failed to get cross-day testdata dir: %v", err)
+	}
+	return dir
+}
+
 // emptyDir returns a path to an empty temp directory (to isolate providers in tests).
 func emptyDir(t *testing.T) string {
 	t.Helper()
@@ -59,6 +69,17 @@ func isolatedArgs(t *testing.T, extraArgs ...string) []string {
 	empty := emptyDir(t)
 	base := []string{"--claude-dir", empty, "--codex-dir", empty, "--cursor-dir", empty}
 	return append(base, extraArgs...)
+}
+
+func crossDayProviderArgs(t *testing.T) []string {
+	t.Helper()
+	root := crossDayTestdataRoot(t)
+	return []string{
+		"--codex-dir", filepath.Join(root, "codex"),
+		"--claude-dir", filepath.Join(root, "claude"),
+		"--kimi-dir", filepath.Join(root, "kimi"),
+		"--cursor-dir", emptyDir(t),
+	}
 }
 
 // buildBinary builds the codetok binary and returns its path.
@@ -160,6 +181,144 @@ func writeCursorCSVFixtureE2E(t *testing.T, path string, rows ...string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("writing csv fixture: %v", err)
 	}
+}
+
+type crossDayDailyKey struct {
+	date     string
+	provider string
+}
+
+type crossDaySessionJSON struct {
+	SessionID    string              `json:"session_id"`
+	ProviderName string              `json:"provider"`
+	Title        string              `json:"title"`
+	Date         string              `json:"date"`
+	Turns        int                 `json:"turns"`
+	TokenUsage   provider.TokenUsage `json:"token_usage"`
+}
+
+func TestEventBasedCrossDayAcceptance(t *testing.T) {
+	bin := buildBinary(t)
+	providerArgs := crossDayProviderArgs(t)
+
+	t.Run("daily JSON splits provider sessions by UTC event date", func(t *testing.T) {
+		args := append([]string{}, providerArgs...)
+		args = append(args,
+			"daily", "--json",
+			"--since", "2026-04-15",
+			"--until", "2026-04-16",
+			"--timezone", "UTC",
+		)
+		output := runCodetok(t, bin, args...)
+
+		var daily []provider.DailyStats
+		if err := json.Unmarshal([]byte(output), &daily); err != nil {
+			t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+		}
+
+		expected := map[crossDayDailyKey]provider.TokenUsage{
+			{date: "2026-04-15", provider: "claude"}: {InputOther: 10, Output: 3, InputCacheRead: 2, InputCacheCreate: 1},
+			{date: "2026-04-15", provider: "codex"}:  {InputOther: 800, Output: 300, InputCacheRead: 200},
+			{date: "2026-04-15", provider: "kimi"}:   {InputOther: 100, Output: 50, InputCacheRead: 200, InputCacheCreate: 10},
+			{date: "2026-04-16", provider: "claude"}: {InputOther: 20, Output: 6, InputCacheRead: 5, InputCacheCreate: 4},
+			{date: "2026-04-16", provider: "codex"}:  {InputOther: 450, Output: 150, InputCacheRead: 50},
+			{date: "2026-04-16", provider: "kimi"}:   {InputOther: 150, Output: 75, InputCacheRead: 300, InputCacheCreate: 20},
+		}
+
+		if len(daily) != len(expected) {
+			t.Fatalf("expected %d daily rows, got %d: %s", len(expected), len(daily), output)
+		}
+
+		for _, row := range daily {
+			key := crossDayDailyKey{date: row.Date, provider: row.ProviderName}
+			want, ok := expected[key]
+			if !ok {
+				t.Fatalf("unexpected daily row for date/provider %#v: %#v", key, row)
+			}
+			if row.GroupBy != "cli" {
+				t.Errorf("%s/%s group_by = %q, want cli", row.Date, row.ProviderName, row.GroupBy)
+			}
+			if row.Group != row.ProviderName {
+				t.Errorf("%s/%s group = %q, want provider name", row.Date, row.ProviderName, row.Group)
+			}
+			if row.Sessions != 1 {
+				t.Errorf("%s/%s sessions = %d, want 1", row.Date, row.ProviderName, row.Sessions)
+			}
+			if row.TokenUsage != want {
+				t.Errorf("%s/%s token_usage = %+v, want %+v", row.Date, row.ProviderName, row.TokenUsage, want)
+			}
+			delete(expected, key)
+		}
+		if len(expected) != 0 {
+			t.Fatalf("missing daily rows: %#v", expected)
+		}
+	})
+
+	t.Run("session JSON includes only UTC in-range event totals", func(t *testing.T) {
+		args := append([]string{}, providerArgs...)
+		args = append(args,
+			"session", "--json",
+			"--since", "2026-04-16",
+			"--until", "2026-04-16",
+			"--timezone", "UTC",
+		)
+		output := runCodetok(t, bin, args...)
+
+		var sessions []crossDaySessionJSON
+		if err := json.Unmarshal([]byte(output), &sessions); err != nil {
+			t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+		}
+
+		expected := map[string]crossDaySessionJSON{
+			"claude": {
+				SessionID:    "claude-cross-day",
+				ProviderName: "claude",
+				Date:         "2026-04-16",
+				Turns:        1,
+				TokenUsage:   provider.TokenUsage{InputOther: 20, Output: 6, InputCacheRead: 5, InputCacheCreate: 4},
+			},
+			"codex": {
+				SessionID:    "codex-cross-day",
+				ProviderName: "codex",
+				Date:         "2026-04-16",
+				Turns:        1,
+				TokenUsage:   provider.TokenUsage{InputOther: 450, Output: 150, InputCacheRead: 50},
+			},
+			"kimi": {
+				SessionID:    "kimi-cross-day",
+				ProviderName: "kimi",
+				Date:         "2026-04-16",
+				Turns:        1,
+				TokenUsage:   provider.TokenUsage{InputOther: 150, Output: 75, InputCacheRead: 300, InputCacheCreate: 20},
+			},
+		}
+
+		if len(sessions) != len(expected) {
+			t.Fatalf("expected %d session rows, got %d: %s", len(expected), len(sessions), output)
+		}
+		for _, session := range sessions {
+			want, ok := expected[session.ProviderName]
+			if !ok {
+				t.Fatalf("unexpected provider session row: %#v", session)
+			}
+			if session.SessionID != want.SessionID {
+				t.Errorf("%s session_id = %q, want %q", session.ProviderName, session.SessionID, want.SessionID)
+			}
+			if session.Date != want.Date {
+				t.Errorf("%s date = %q, want %q", session.ProviderName, session.Date, want.Date)
+			}
+			if session.Turns != want.Turns {
+				t.Errorf("%s turns = %d, want %d", session.ProviderName, session.Turns, want.Turns)
+			}
+			if session.TokenUsage != want.TokenUsage {
+				t.Errorf("%s token_usage = %+v, want %+v", session.ProviderName, session.TokenUsage, want.TokenUsage)
+			}
+			delete(expected, session.ProviderName)
+		}
+		if len(expected) != 0 {
+			t.Fatalf("missing session rows: %#v", expected)
+		}
+	})
 }
 
 func TestDailyCommand_JSONOutput_DefaultGroupByCLI(t *testing.T) {
