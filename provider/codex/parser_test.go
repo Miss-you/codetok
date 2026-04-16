@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestParseCodexSession_ValidData(t *testing.T) {
@@ -337,4 +338,389 @@ func TestCollectCodexSessions_DateDirStructure(t *testing.T) {
 			t.Errorf("missing session %s", s.sessionID)
 		}
 	}
+}
+
+func TestParseCodexUsageEvents_LastTokenUsageEmitsOneEvent(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-last.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"last-session","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:00:01Z","type":"turn_context","payload":{"model":"gpt-5.4"}}
+{"timestamp":"2026-04-15T10:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"first question"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":120,"cached_input_tokens":20,"output_tokens":30,"total_tokens":150},"total_token_usage":{"input_tokens":1000,"cached_input_tokens":500,"output_tokens":300,"total_tokens":1300}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1: %#v", len(events), events)
+	}
+	event := events[0]
+	if event.ProviderName != "codex" {
+		t.Errorf("ProviderName = %q, want codex", event.ProviderName)
+	}
+	if event.SessionID != "last-session" {
+		t.Errorf("SessionID = %q, want last-session", event.SessionID)
+	}
+	if event.Title != "first question" {
+		t.Errorf("Title = %q, want first question", event.Title)
+	}
+	if event.ModelName != "gpt-5.4" {
+		t.Errorf("ModelName = %q, want gpt-5.4", event.ModelName)
+	}
+	if !event.Timestamp.Equal(time.Date(2026, 4, 15, 10, 1, 0, 0, time.UTC)) {
+		t.Errorf("Timestamp = %s, want 2026-04-15T10:01:00Z", event.Timestamp.Format(time.RFC3339))
+	}
+	if event.TokenUsage.InputOther != 100 {
+		t.Errorf("InputOther = %d, want 100", event.TokenUsage.InputOther)
+	}
+	if event.TokenUsage.InputCacheRead != 20 {
+		t.Errorf("InputCacheRead = %d, want 20", event.TokenUsage.InputCacheRead)
+	}
+	if event.TokenUsage.Output != 30 {
+		t.Errorf("Output = %d, want 30", event.TokenUsage.Output)
+	}
+	if event.SourcePath != filePath {
+		t.Errorf("SourcePath = %q, want %q", event.SourcePath, filePath)
+	}
+	if event.EventID == "" {
+		t.Error("EventID should be stable and non-empty")
+	}
+}
+
+func TestParseCodexUsageEvents_TotalUsageDeltasAcrossDays(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-deltas.jsonl")
+	content := `{"timestamp":"2026-04-15T23:50:00Z","type":"session_meta","payload":{"id":"delta-session","timestamp":"2026-04-15T23:50:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T23:51:00Z","type":"turn_context","payload":{"model":"gpt-5.4"}}
+{"timestamp":"2026-04-15T23:55:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":300,"reasoning_output_tokens":0,"total_tokens":1300}}}}
+{"timestamp":"2026-04-16T00:10:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1500,"cached_input_tokens":250,"output_tokens":450,"reasoning_output_tokens":0,"total_tokens":1950}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2: %#v", len(events), events)
+	}
+	if !events[0].Timestamp.Equal(time.Date(2026, 4, 15, 23, 55, 0, 0, time.UTC)) {
+		t.Errorf("first Timestamp = %s, want 2026-04-15T23:55:00Z", events[0].Timestamp.Format(time.RFC3339))
+	}
+	if events[0].TokenUsage.InputOther != 800 {
+		t.Errorf("first InputOther = %d, want 800", events[0].TokenUsage.InputOther)
+	}
+	if events[0].TokenUsage.InputCacheRead != 200 {
+		t.Errorf("first InputCacheRead = %d, want 200", events[0].TokenUsage.InputCacheRead)
+	}
+	if events[0].TokenUsage.Output != 300 {
+		t.Errorf("first Output = %d, want 300", events[0].TokenUsage.Output)
+	}
+	if !events[1].Timestamp.Equal(time.Date(2026, 4, 16, 0, 10, 0, 0, time.UTC)) {
+		t.Errorf("second Timestamp = %s, want 2026-04-16T00:10:00Z", events[1].Timestamp.Format(time.RFC3339))
+	}
+	if events[1].TokenUsage.InputOther != 450 {
+		t.Errorf("second InputOther = %d, want 450", events[1].TokenUsage.InputOther)
+	}
+	if events[1].TokenUsage.InputCacheRead != 50 {
+		t.Errorf("second InputCacheRead = %d, want 50", events[1].TokenUsage.InputCacheRead)
+	}
+	if events[1].TokenUsage.Output != 150 {
+		t.Errorf("second Output = %d, want 150", events[1].TokenUsage.Output)
+	}
+}
+
+func TestParseCodexUsageEvents_CumulativeResetStartsFreshDelta(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-reset.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"reset-session","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"total_tokens":1200}}}}
+{"timestamp":"2026-04-15T10:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30,"total_tokens":130}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2: %#v", len(events), events)
+	}
+	if events[1].TokenUsage.InputOther != 80 {
+		t.Errorf("reset InputOther = %d, want 80", events[1].TokenUsage.InputOther)
+	}
+	if events[1].TokenUsage.InputCacheRead != 20 {
+		t.Errorf("reset InputCacheRead = %d, want 20", events[1].TokenUsage.InputCacheRead)
+	}
+	if events[1].TokenUsage.Output != 30 {
+		t.Errorf("reset Output = %d, want 30", events[1].TokenUsage.Output)
+	}
+}
+
+func TestParseCodexUsageEvents_LastTokenUsageAdvancesCumulativeBaseline(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-mixed.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"mixed-session","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+{"timestamp":"2026-04-15T10:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"cached_input_tokens":15,"output_tokens":30,"total_tokens":180}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2: %#v", len(events), events)
+	}
+	if events[1].TokenUsage.InputOther != 45 {
+		t.Errorf("mixed InputOther = %d, want 45", events[1].TokenUsage.InputOther)
+	}
+	if events[1].TokenUsage.InputCacheRead != 5 {
+		t.Errorf("mixed InputCacheRead = %d, want 5", events[1].TokenUsage.InputCacheRead)
+	}
+	if events[1].TokenUsage.Output != 10 {
+		t.Errorf("mixed Output = %d, want 10", events[1].TokenUsage.Output)
+	}
+}
+
+func TestParseCodexUsageEvents_LastTokenUsageAfterResetDoesNotDoubleCount(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-reset-after-last.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"reset-last-session","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":100,"output_tokens":200,"total_tokens":1200}}}}
+{"timestamp":"2026-04-15T10:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+{"timestamp":"2026-04-15T10:03:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"cached_input_tokens":15,"output_tokens":30,"total_tokens":180}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3: %#v", len(events), events)
+	}
+	if events[2].TokenUsage.InputOther != 45 {
+		t.Errorf("post-reset InputOther = %d, want 45", events[2].TokenUsage.InputOther)
+	}
+	if events[2].TokenUsage.InputCacheRead != 5 {
+		t.Errorf("post-reset InputCacheRead = %d, want 5", events[2].TokenUsage.InputCacheRead)
+	}
+	if events[2].TokenUsage.Output != 10 {
+		t.Errorf("post-reset Output = %d, want 10", events[2].TokenUsage.Output)
+	}
+
+	session, err := parseCodexSession(filePath)
+	if err != nil {
+		t.Fatalf("unexpected session parse error: %v", err)
+	}
+	if session.TokenUsage.InputOther != 1035 {
+		t.Errorf("session InputOther = %d, want 1035", session.TokenUsage.InputOther)
+	}
+	if session.TokenUsage.InputCacheRead != 115 {
+		t.Errorf("session InputCacheRead = %d, want 115", session.TokenUsage.InputCacheRead)
+	}
+	if session.TokenUsage.Output != 230 {
+		t.Errorf("session Output = %d, want 230", session.TokenUsage.Output)
+	}
+}
+
+func TestParseCodexSession_KeepsFirstSessionMetadataAndSumsResetUsage(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-session-reset.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"first-session","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"first title"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+{"timestamp":"2026-04-15T10:02:00Z","type":"session_meta","payload":{"id":"second-session","timestamp":"2026-04-15T10:02:00Z","cwd":"/other"}}
+{"timestamp":"2026-04-15T10:03:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":50,"cached_input_tokens":5,"output_tokens":10,"total_tokens":60}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := parseCodexSession(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.SessionID != "first-session" {
+		t.Errorf("SessionID = %q, want first-session", info.SessionID)
+	}
+	if info.TokenUsage.InputOther != 135 {
+		t.Errorf("InputOther = %d, want 135", info.TokenUsage.InputOther)
+	}
+	if info.TokenUsage.InputCacheRead != 15 {
+		t.Errorf("InputCacheRead = %d, want 15", info.TokenUsage.InputCacheRead)
+	}
+	if info.TokenUsage.Output != 30 {
+		t.Errorf("Output = %d, want 30", info.TokenUsage.Output)
+	}
+}
+
+func TestParseCodexUsageEvents_KeepsFirstSessionMetadata(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-metadata.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"first-session","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"first title"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+{"timestamp":"2026-04-15T10:02:00Z","type":"session_meta","payload":{"id":"second-session","timestamp":"2026-04-15T10:02:00Z","cwd":"/other"}}
+{"timestamp":"2026-04-15T10:02:01Z","type":"event_msg","payload":{"type":"user_message","message":"second title"}}
+{"timestamp":"2026-04-15T10:03:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"cached_input_tokens":20,"output_tokens":30,"total_tokens":180}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2: %#v", len(events), events)
+	}
+	for i, event := range events {
+		if event.SessionID != "first-session" {
+			t.Errorf("event %d SessionID = %q, want first-session", i, event.SessionID)
+		}
+		if event.Title != "first title" {
+			t.Errorf("event %d Title = %q, want first title", i, event.Title)
+		}
+	}
+}
+
+func TestParseCodexUsageEvents_LeavesSessionIDEmptyWithoutMetadata(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-no-metadata.jsonl")
+	content := `{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1: %#v", len(events), events)
+	}
+	if events[0].SessionID != "" {
+		t.Errorf("SessionID = %q, want empty without session_meta.id", events[0].SessionID)
+	}
+	if events[0].SourcePath != filePath {
+		t.Errorf("SourcePath = %q, want %q", events[0].SourcePath, filePath)
+	}
+}
+
+func TestParseCodexUsageEvents_UsesTurnContextModelFallback(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-model-fallback.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"model-session","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:00:01Z","type":"turn_context","payload":{"model":"gpt-5.4"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1: %#v", len(events), events)
+	}
+	if events[0].ModelName != "gpt-5.4" {
+		t.Errorf("ModelName = %q, want gpt-5.4", events[0].ModelName)
+	}
+}
+
+func TestCollectCodexUsageEvents_UsesCodexHomeWhenBaseDirEmpty(t *testing.T) {
+	codexHome := t.TempDir()
+	rolloutPath := writeCodexSessionFile(t, filepath.Join(codexHome, "sessions"), "2026", "04", "15", "rollout-home.jsonl", "home-session", "home title")
+	t.Setenv("CODEX_HOME", codexHome)
+
+	p := &Provider{}
+	events, err := p.CollectUsageEvents("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1: %#v", len(events), events)
+	}
+	if events[0].SessionID != "home-session" {
+		t.Errorf("SessionID = %q, want home-session", events[0].SessionID)
+	}
+	if events[0].SourcePath != rolloutPath {
+		t.Errorf("SourcePath = %q, want %q", events[0].SourcePath, rolloutPath)
+	}
+}
+
+func TestCollectCodexSessions_UsesCodexHomeWhenBaseDirEmpty(t *testing.T) {
+	codexHome := t.TempDir()
+	writeCodexSessionFile(t, filepath.Join(codexHome, "sessions"), "2026", "04", "15", "rollout-home-session.jsonl", "home-session", "home title")
+	t.Setenv("CODEX_HOME", codexHome)
+
+	p := &Provider{}
+	sessions, err := p.CollectSessions("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1: %#v", len(sessions), sessions)
+	}
+	if sessions[0].SessionID != "home-session" {
+		t.Errorf("SessionID = %q, want home-session", sessions[0].SessionID)
+	}
+}
+
+func TestCollectCodexUsageEvents_ExplicitBaseDirOverridesCodexHome(t *testing.T) {
+	codexHome := t.TempDir()
+	writeCodexSessionFile(t, filepath.Join(codexHome, "sessions"), "2026", "04", "15", "rollout-home.jsonl", "home-session", "home title")
+	explicitDir := t.TempDir()
+	writeCodexSessionFile(t, explicitDir, "2026", "04", "16", "rollout-explicit.jsonl", "explicit-session", "explicit title")
+	t.Setenv("CODEX_HOME", codexHome)
+
+	p := &Provider{}
+	events, err := p.CollectUsageEvents(explicitDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1: %#v", len(events), events)
+	}
+	if events[0].SessionID != "explicit-session" {
+		t.Errorf("SessionID = %q, want explicit-session", events[0].SessionID)
+	}
+}
+
+func writeCodexSessionFile(t *testing.T, baseDir, year, month, day, name, sessionID, title string) string {
+	t.Helper()
+
+	dir := filepath.Join(baseDir, year, month, day)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"` + sessionID + `","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"` + title + `"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

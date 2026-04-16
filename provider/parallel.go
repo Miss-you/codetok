@@ -10,6 +10,9 @@ import (
 // ParseFunc is a function that parses a single item and returns a parsed result.
 type ParseFunc[T any] func(path string) (T, error)
 
+// UsageEventParseFunc is a function that parses a single item and returns usage events.
+type UsageEventParseFunc func(path string) ([]UsageEvent, error)
+
 // ParseParallel parses multiple items in parallel with bounded concurrency.
 // maxWorkers <= 0 means use default (from CODETOK_WORKERS env or runtime.NumCPU()).
 // Items that return errors are silently skipped.
@@ -41,6 +44,44 @@ func ParseParallel[T any](items []string, maxWorkers int, parseFn ParseFunc[T]) 
 			}
 			mu.Lock()
 			results = append(results, info)
+			mu.Unlock()
+		}(item)
+	}
+	wg.Wait()
+	return results
+}
+
+// ParseUsageEventsParallel parses multiple items into usage events with bounded concurrency.
+// maxWorkers <= 0 means use default (from CODETOK_WORKERS env or runtime.NumCPU()).
+// Items that return errors are silently skipped.
+func ParseUsageEventsParallel(items []string, maxWorkers int, parseFn UsageEventParseFunc) []UsageEvent {
+	if maxWorkers <= 0 {
+		maxWorkers = defaultWorkers()
+	}
+	if maxWorkers > len(items) {
+		maxWorkers = len(items)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+
+	var mu sync.Mutex
+	var results []UsageEvent
+	sem := make(chan struct{}, maxWorkers)
+	var wg sync.WaitGroup
+
+	for _, item := range items {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			events, err := parseFn(path)
+			if err != nil {
+				return // skip failed items
+			}
+			mu.Lock()
+			results = append(results, events...)
 			mu.Unlock()
 		}(item)
 	}
