@@ -124,14 +124,18 @@ func eventGroupNameForDimension(e provider.UsageEvent, dimension AggregateDimens
 	case AggregateDimensionModel:
 		return normalizeModelName(e.ModelName, e.ProviderName)
 	case AggregateDimensionCLI, "":
-		return e.ProviderName
+		return normalizedEventProviderName(e)
 	default:
-		return e.ProviderName
+		return normalizedEventProviderName(e)
 	}
 }
 
+func normalizedEventProviderName(e provider.UsageEvent) string {
+	return strings.TrimSpace(e.ProviderName)
+}
+
 func eventSessionKey(e provider.UsageEvent) string {
-	providerName := strings.TrimSpace(e.ProviderName)
+	providerName := normalizedEventProviderName(e)
 	if sessionID := strings.TrimSpace(e.SessionID); sessionID != "" {
 		return providerName + "\x00session\x00" + sessionID
 	}

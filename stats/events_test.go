@@ -86,6 +86,29 @@ func TestAggregateEventsByDayWithDimension_CountsDistinctSessionsNotEvents(t *te
 	}
 }
 
+func TestAggregateEventsByDayWithDimension_TrimsCLIProviderGroups(t *testing.T) {
+	day := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	events := []provider.UsageEvent{
+		makeUsageEvent("s1", " codex ", "", day, 100, 10),
+		makeUsageEvent("s2", "codex", "", day.Add(time.Hour), 200, 20),
+	}
+
+	got := AggregateEventsByDayWithDimension(events, AggregateDimensionCLI, time.UTC)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1: %#v", len(got), got)
+	}
+	if got[0].Group != "codex" || got[0].ProviderName != "codex" {
+		t.Fatalf("group metadata mismatch: %#v", got[0])
+	}
+	if got[0].Sessions != 2 {
+		t.Fatalf("Sessions = %d, want 2", got[0].Sessions)
+	}
+	if got[0].TokenUsage.Total() != 330 {
+		t.Fatalf("Total = %d, want 330", got[0].TokenUsage.Total())
+	}
+}
+
 func TestAggregateEventsByDayWithDimension_UsesSourcePathFallbackForSessionCount(t *testing.T) {
 	day := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
 	events := []provider.UsageEvent{
