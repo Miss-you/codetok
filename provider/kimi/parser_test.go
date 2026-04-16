@@ -260,7 +260,8 @@ func TestParseKimiUsageEvents_StatusUpdatesEmitIncrementalEvents(t *testing.T) {
 {"timestamp": %.1f, "message": {"type": "StatusUpdate", "payload": {"model_name":"moonshot-v1-128k","message_id":"msg-a","token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}}}}
 {"timestamp": %.1f, "message": {"type": "StatusUpdate", "payload": {"message_id":"msg-b","token_usage": {"input_other": 150, "output": 75, "input_cache_read": 300, "input_cache_creation": 20}}}}
 {"timestamp": 1771027201.5, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.5}}}
-`, float64(firstTimestamp.UnixNano())/1e9, float64(secondTimestamp.UnixNano())/1e9)
+{"timestamp": %.1f, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 1, "output": 2, "input_cache_read": 3, "input_cache_creation": 4}}}}
+`, float64(firstTimestamp.UnixNano())/1e9, float64(secondTimestamp.UnixNano())/1e9, float64(secondTimestamp.Add(time.Second).UnixNano())/1e9)
 	wirePath := filepath.Join(dir, "wire.jsonl")
 	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -276,8 +277,8 @@ func TestParseKimiUsageEvents_StatusUpdatesEmitIncrementalEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(events) != 2 {
-		t.Fatalf("got %d events, want 2", len(events))
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3", len(events))
 	}
 	if modelName != "moonshot-v1-128k" {
 		t.Fatalf("modelName = %q, want %q", modelName, "moonshot-v1-128k")
@@ -299,11 +300,17 @@ func TestParseKimiUsageEvents_StatusUpdatesEmitIncrementalEvents(t *testing.T) {
 	if events[1].TokenUsage.InputOther != 150 || events[1].TokenUsage.Output != 75 || events[1].TokenUsage.InputCacheRead != 300 || events[1].TokenUsage.InputCacheCreate != 20 {
 		t.Fatalf("second TokenUsage = %+v, want line-local usage", events[1].TokenUsage)
 	}
+	if events[2].TokenUsage.InputOther != 1 || events[2].TokenUsage.Output != 2 || events[2].TokenUsage.InputCacheRead != 3 || events[2].TokenUsage.InputCacheCreate != 4 {
+		t.Fatalf("third TokenUsage = %+v, want line-local usage", events[2].TokenUsage)
+	}
 	if events[0].EventID != wirePath+"#msg-a" {
 		t.Fatalf("first EventID = %q, want %q", events[0].EventID, wirePath+"#msg-a")
 	}
 	if events[1].EventID != wirePath+"#msg-b" {
 		t.Fatalf("second EventID = %q, want %q", events[1].EventID, wirePath+"#msg-b")
+	}
+	if events[2].EventID != wirePath+":5" {
+		t.Fatalf("third EventID = %q, want %q", events[2].EventID, wirePath+":5")
 	}
 	for i, event := range events {
 		if event.ProviderName != "kimi" || event.SessionID != "session-1" || event.Title != "Session" || event.WorkDirHash != "hashA" {

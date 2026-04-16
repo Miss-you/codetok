@@ -95,3 +95,4 @@
 - 2026-04-16 17:27 CST: `EBTA-005` moved to `verifying`; focused Kimi event tests and `go test ./provider/kimi` passed.
 - 2026-04-16 17:36 CST: `EBTA-005` moved to `review`; full gates passed: `make fmt`, `make test`, `make vet`, `make build`, and `make lint`.
 - 2026-04-16 17:41 CST: `EBTA-005` moved to `done`; review EventID drift fixed, post-review gates passed, and workspace review notes were written.
+- 2026-04-16 17:55 CST: PR review feedback addressed: EventID fallback coverage, token_usage doc wording, and bounded parallel event parsing via `provider.ParseParallel`; post-fix gates passed.

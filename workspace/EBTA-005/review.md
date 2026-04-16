@@ -21,6 +21,23 @@ Post-review verification:
 - `make build`
 - `make lint`
 
+PR review follow-up:
+
+- Added coverage for `EventID` line-number fallback when `message_id` is absent.
+- Aligned design/test-strategy wording with the implemented filter: one event per `StatusUpdate` that includes `token_usage`.
+- Made `provider.ParseParallel` generic and changed Kimi `CollectUsageEvents` to collect session paths first, then parse event batches with bounded concurrency.
+
+Post-PR-review verification:
+
+- `go test ./provider -run TestParseParallel`
+- `go test ./provider/kimi -run 'Test(ParseKimiUsageEvents|CollectKimiUsageEvents)'`
+- `go test ./provider ./provider/kimi`
+- `make fmt`
+- `make test`
+- `make vet`
+- `make build`
+- `make lint`
+
 Remaining risk:
 
 - Kimi `StatusUpdate.token_usage` remains intentionally treated as incremental. A future real-log fixture should drive a separate task if Kimi starts emitting cumulative counters.

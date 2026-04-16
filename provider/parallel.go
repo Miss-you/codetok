@@ -7,13 +7,13 @@ import (
 	"sync"
 )
 
-// ParseFunc is a function that parses a single item and returns a SessionInfo.
-type ParseFunc func(path string) (SessionInfo, error)
+// ParseFunc is a function that parses a single item and returns a parsed result.
+type ParseFunc[T any] func(path string) (T, error)
 
 // ParseParallel parses multiple items in parallel with bounded concurrency.
 // maxWorkers <= 0 means use default (from CODETOK_WORKERS env or runtime.NumCPU()).
 // Items that return errors are silently skipped.
-func ParseParallel(items []string, maxWorkers int, parseFn ParseFunc) []SessionInfo {
+func ParseParallel[T any](items []string, maxWorkers int, parseFn ParseFunc[T]) []T {
 	if maxWorkers <= 0 {
 		maxWorkers = defaultWorkers()
 	}
@@ -25,7 +25,7 @@ func ParseParallel(items []string, maxWorkers int, parseFn ParseFunc) []SessionI
 	}
 
 	var mu sync.Mutex
-	var results []SessionInfo
+	var results []T
 	sem := make(chan struct{}, maxWorkers)
 	var wg sync.WaitGroup
 

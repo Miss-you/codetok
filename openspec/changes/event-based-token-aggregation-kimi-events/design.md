@@ -9,7 +9,7 @@ The EBTA-005 task is provider-scoped. It should not switch command behavior, alt
 - Add `CollectUsageEvents(baseDir string)` to the Kimi provider and keep `CollectSessions` unchanged.
 - Reuse the existing Kimi session discovery shape and log model fallback.
 - Add a `parseUsageEvents(sessionPath, workDirHash, sessionModelIndex)` helper that reads metadata once, then scans `wire.jsonl`.
-- Emit one event for each valid `StatusUpdate` with non-zero token usage fields, using that line's timestamp.
+- Emit one event for each valid `StatusUpdate` that includes a `token_usage` object, using that line's timestamp.
 - Treat `StatusUpdate.token_usage` as incremental, matching existing session tests and the task plan.
 - Populate event metadata from the same priority order as sessions:
   metadata model fields, then `StatusUpdate` model fields, then log fallback.

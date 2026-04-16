@@ -21,7 +21,7 @@ Repository gates before closing:
 
 Coverage target:
 
-- one event per `StatusUpdate`
+- one event per `StatusUpdate` with `token_usage`
 - event timestamp equals the status line timestamp
 - cross-day records remain separate events
 - metadata model/title/session fallback is preserved

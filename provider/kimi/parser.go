@@ -126,7 +126,8 @@ func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, er
 	}
 	sessionModelIndex := loadSessionModelsFromLogs(detectKimiLogsDir(baseDir))
 
-	var events []provider.UsageEvent
+	var paths []string
+	pathToHash := make(map[string]string)
 
 	workDirs, err := os.ReadDir(baseDir)
 	if err != nil {
@@ -156,12 +157,18 @@ func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, er
 				continue
 			}
 
-			sessionEvents, err := parseSessionUsageEvents(sessionPath, workDirHash, sessionModelIndex)
-			if err != nil {
-				continue
-			}
-			events = append(events, sessionEvents...)
+			paths = append(paths, sessionPath)
+			pathToHash[sessionPath] = workDirHash
 		}
+	}
+
+	eventBatches := provider.ParseParallel(paths, 0, func(path string) ([]provider.UsageEvent, error) {
+		return parseSessionUsageEvents(path, pathToHash[path], sessionModelIndex)
+	})
+
+	var events []provider.UsageEvent
+	for _, batch := range eventBatches {
+		events = append(events, batch...)
 	}
 
 	return events, nil
