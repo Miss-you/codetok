@@ -3,10 +3,12 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +17,45 @@ import (
 	"github.com/miss-you/codetok/provider"
 	"github.com/miss-you/codetok/stats"
 )
+
+var dailyEventTestProviderCounter uint64
+
+type dailyEventTestProvider struct {
+	name       string
+	events     []provider.UsageEvent
+	eventErr   error
+	sessions   []provider.SessionInfo
+	sessionErr error
+}
+
+func (p *dailyEventTestProvider) Name() string {
+	return p.name
+}
+
+func (p *dailyEventTestProvider) CollectSessions(baseDir string) ([]provider.SessionInfo, error) {
+	if p.sessionErr != nil {
+		return nil, p.sessionErr
+	}
+	return p.sessions, nil
+}
+
+func (p *dailyEventTestProvider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
+	if p.eventErr != nil {
+		return nil, p.eventErr
+	}
+	return p.events, nil
+}
+
+func registerDailyEventTestProvider(events []provider.UsageEvent, sessions []provider.SessionInfo) *dailyEventTestProvider {
+	id := atomic.AddUint64(&dailyEventTestProviderCounter, 1)
+	p := &dailyEventTestProvider{
+		name:     fmt.Sprintf("daily-event-test-%d", id),
+		events:   events,
+		sessions: sessions,
+	}
+	provider.Register(p)
+	return p
+}
 
 func TestResolveDailyDateRange_DefaultWindow(t *testing.T) {
 	loc := mustLoadLocation(t, "Asia/Shanghai")
@@ -135,6 +176,192 @@ func TestResolveTimezone_RunDailyRejectsInvalidFlag(t *testing.T) {
 	err := runDaily(cmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "invalid --timezone") {
 		t.Fatalf("expected invalid --timezone error, got: %v", err)
+	}
+}
+
+func TestDailyJSONSplitsSameSessionAcrossEventDates(t *testing.T) {
+	first := time.Date(2026, 4, 15, 23, 50, 0, 0, time.UTC)
+	second := time.Date(2026, 4, 16, 0, 10, 0, 0, time.UTC)
+	events := []provider.UsageEvent{
+		{
+			ProviderName: "daily-event-test",
+			SessionID:    "same-session",
+			ModelName:    "gpt-5.4",
+			Timestamp:    first,
+			TokenUsage:   provider.TokenUsage{InputOther: 100, Output: 10},
+		},
+		{
+			ProviderName: "daily-event-test",
+			SessionID:    "same-session",
+			ModelName:    "gpt-5.4",
+			Timestamp:    second,
+			TokenUsage:   provider.TokenUsage{InputOther: 200, Output: 20},
+		},
+	}
+	sessions := []provider.SessionInfo{
+		{
+			ProviderName: "daily-event-test",
+			SessionID:    "same-session",
+			ModelName:    "gpt-5.4",
+			StartTime:    first,
+			TokenUsage:   provider.TokenUsage{InputOther: 300, Output: 30},
+		},
+	}
+	fake := registerDailyEventTestProvider(events, sessions)
+
+	cmd := newDailyTestCommand()
+	setDailyTestFlag(t, cmd, "json", "true")
+	setDailyTestFlag(t, cmd, "provider", fake.name)
+	setDailyTestFlag(t, cmd, "since", "2026-04-15")
+	setDailyTestFlag(t, cmd, "until", "2026-04-16")
+	setDailyTestFlag(t, cmd, "timezone", "UTC")
+
+	got := runDailyJSON(t, cmd)
+
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, want 2: %#v", len(got), got)
+	}
+	if got[0].Date != "2026-04-15" || got[0].TokenUsage.Total() != 110 || got[0].Sessions != 1 {
+		t.Fatalf("first row mismatch: %#v", got[0])
+	}
+	if got[1].Date != "2026-04-16" || got[1].TokenUsage.Total() != 220 || got[1].Sessions != 1 {
+		t.Fatalf("second row mismatch: %#v", got[1])
+	}
+}
+
+func TestDailyJSONUsesEventTimezoneDateKeys(t *testing.T) {
+	timestamp := time.Date(2026, 4, 15, 18, 0, 0, 0, time.UTC)
+	events := []provider.UsageEvent{
+		{
+			ProviderName: "daily-event-test",
+			SessionID:    "timezone-session",
+			Timestamp:    timestamp,
+			TokenUsage:   provider.TokenUsage{InputOther: 10, Output: 1},
+		},
+	}
+	sessions := []provider.SessionInfo{
+		{
+			ProviderName: "daily-event-test",
+			SessionID:    "timezone-session",
+			StartTime:    timestamp,
+			TokenUsage:   provider.TokenUsage{InputOther: 10, Output: 1},
+		},
+	}
+	fake := registerDailyEventTestProvider(events, sessions)
+
+	cmd := newDailyTestCommand()
+	setDailyTestFlag(t, cmd, "json", "true")
+	setDailyTestFlag(t, cmd, "provider", fake.name)
+	setDailyTestFlag(t, cmd, "since", "2026-04-16")
+	setDailyTestFlag(t, cmd, "until", "2026-04-16")
+	setDailyTestFlag(t, cmd, "timezone", "Asia/Shanghai")
+
+	got := runDailyJSON(t, cmd)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1: %#v", len(got), got)
+	}
+	if got[0].Date != "2026-04-16" {
+		t.Fatalf("Date = %q, want 2026-04-16: %#v", got[0].Date, got[0])
+	}
+	if got[0].GroupBy != "cli" || got[0].Group != "daily-event-test" || got[0].ProviderName != "daily-event-test" {
+		t.Fatalf("group metadata mismatch: %#v", got[0])
+	}
+	if got[0].TokenUsage.Total() != 11 {
+		t.Fatalf("total = %d, want 11", got[0].TokenUsage.Total())
+	}
+}
+
+func TestDailyDateWindowValidationPrecedesCollection(t *testing.T) {
+	boom := errors.New("provider should not be collected")
+	fake := &dailyEventTestProvider{
+		name:       "daily-event-validation-test",
+		eventErr:   boom,
+		sessionErr: boom,
+	}
+	provider.Register(fake)
+
+	cmd := newDailyTestCommand()
+	setDailyTestFlag(t, cmd, "provider", fake.name)
+	setDailyTestFlag(t, cmd, "all", "true")
+	setDailyTestFlag(t, cmd, "since", "2026-04-16")
+
+	err := runDaily(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "--all cannot be used") {
+		t.Fatalf("expected date-window validation error, got: %v", err)
+	}
+	if strings.Contains(err.Error(), boom.Error()) {
+		t.Fatalf("provider error should not mask date-window validation: %v", err)
+	}
+}
+
+func TestBuildDailyStatsFromUsageEvents_DefaultWindowUsesLocalizedSinceDate(t *testing.T) {
+	shanghai := mustLoadLocation(t, "Asia/Shanghai")
+	now := time.Date(2026, 4, 16, 12, 0, 0, 0, shanghai)
+	since, until, err := resolveDailyDateRange("", "", 1, false, false, now, shanghai)
+	if err != nil {
+		t.Fatalf("resolveDailyDateRange returned error: %v", err)
+	}
+	events := []provider.UsageEvent{
+		{
+			ProviderName: "codex",
+			SessionID:    "before",
+			Timestamp:    time.Date(2026, 4, 15, 15, 59, 59, 0, time.UTC),
+			TokenUsage:   provider.TokenUsage{InputOther: 100},
+		},
+		{
+			ProviderName: "codex",
+			SessionID:    "inside",
+			Timestamp:    time.Date(2026, 4, 15, 16, 0, 0, 0, time.UTC),
+			TokenUsage:   provider.TokenUsage{InputOther: 200},
+		},
+	}
+
+	got := buildDailyStatsFromUsageEvents(events, since, until, shanghai, stats.AggregateDimensionCLI)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1: %#v", len(got), got)
+	}
+	if got[0].Date != "2026-04-16" || got[0].TokenUsage.InputOther != 200 {
+		t.Fatalf("row mismatch: %#v", got[0])
+	}
+}
+
+func TestBuildDailyStatsFromUsageEvents_ModelGroupingPreservesProviderIdentity(t *testing.T) {
+	day := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	events := []provider.UsageEvent{
+		{
+			ProviderName: "claude",
+			SessionID:    "claude-session",
+			ModelName:    "shared-model",
+			Timestamp:    day,
+			TokenUsage:   provider.TokenUsage{InputOther: 100},
+		},
+		{
+			ProviderName: "codex",
+			SessionID:    "codex-session",
+			ModelName:    "shared-model",
+			Timestamp:    day.Add(time.Hour),
+			TokenUsage:   provider.TokenUsage{Output: 50},
+		},
+	}
+
+	got := buildDailyStatsFromUsageEvents(events, time.Time{}, time.Time{}, time.UTC, stats.AggregateDimensionModel)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1: %#v", len(got), got)
+	}
+	if got[0].GroupBy != "model" || got[0].Group != "shared-model" {
+		t.Fatalf("group metadata mismatch: %#v", got[0])
+	}
+	if got[0].ProviderName != "" {
+		t.Fatalf("ProviderName = %q, want empty for multi-provider model group", got[0].ProviderName)
+	}
+	if len(got[0].Providers) != 2 || got[0].Providers[0] != "claude" || got[0].Providers[1] != "codex" {
+		t.Fatalf("Providers = %v, want [claude codex]", got[0].Providers)
+	}
+	if got[0].TokenUsage.Total() != 150 {
+		t.Fatalf("total = %d, want 150", got[0].TokenUsage.Total())
 	}
 }
 
@@ -458,6 +685,28 @@ func captureStdout(t *testing.T, fn func()) string {
 	output := <-done
 	_ = r.Close()
 	return output
+}
+
+func runDailyJSON(t *testing.T, cmd *cobra.Command) []provider.DailyStats {
+	t.Helper()
+	output := captureStdout(t, func() {
+		if err := runDaily(cmd, nil); err != nil {
+			t.Fatalf("runDaily returned error: %v", err)
+		}
+	})
+
+	var got []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("json output should be parseable: %v\noutput: %s", err, output)
+	}
+	return got
+}
+
+func setDailyTestFlag(t *testing.T, cmd *cobra.Command, name, value string) {
+	t.Helper()
+	if err := cmd.Flags().Set(name, value); err != nil {
+		t.Fatalf("setting --%s: %v", name, err)
+	}
 }
 
 func newDailyTestCommand() *cobra.Command {

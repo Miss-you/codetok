@@ -83,11 +83,6 @@ func runDaily(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	allSessions, err := collectSessions(cmd)
-	if err != nil {
-		return err
-	}
-
 	since, until, err := resolveDailyDateRange(
 		sinceStr,
 		untilStr,
@@ -101,8 +96,12 @@ func runDaily(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	allSessions = stats.FilterByDateRange(allSessions, since, until)
-	daily := stats.AggregateByDayWithDimension(allSessions, groupBy)
+	allEvents, err := collectUsageEvents(cmd)
+	if err != nil {
+		return err
+	}
+
+	daily := buildDailyStatsFromUsageEvents(allEvents, since, until, loc, groupBy)
 
 	if jsonOutput {
 		if daily == nil {
@@ -249,6 +248,29 @@ func resolveDailyDateRange(
 	startOfToday := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
 	since = startOfToday.AddDate(0, 0, -(days - 1))
 	return since, time.Time{}, nil
+}
+
+func buildDailyStatsFromUsageEvents(
+	events []provider.UsageEvent,
+	since time.Time,
+	until time.Time,
+	loc *time.Location,
+	groupBy stats.AggregateDimension,
+) []provider.DailyStats {
+	sinceDate := dailyDateBound(since, loc)
+	untilDate := dailyDateBound(until, loc)
+	events = stats.FilterEventsByDateRange(events, sinceDate, untilDate, loc)
+	return stats.AggregateEventsByDayWithDimension(events, groupBy, loc)
+}
+
+func dailyDateBound(t time.Time, loc *time.Location) string {
+	if t.IsZero() {
+		return ""
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	return t.In(loc).Format("2006-01-02")
 }
 
 type dayTotal struct {
