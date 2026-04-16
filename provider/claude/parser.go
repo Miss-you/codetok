@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +57,39 @@ type claudeUsage struct {
 // The expected layout is: baseDir/<project-slug>/<session-uuid>.jsonl
 // When baseDir is empty, both ~/.claude/projects and ~/.claude-internal/projects are scanned.
 func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, error) {
+	paths, pathToSlug, err := collectSessionPaths(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 2: Parse all sessions in parallel
+	sessions := provider.ParseParallel(paths, 0, func(path string) (provider.SessionInfo, error) {
+		return parseSession(path, pathToSlug[path])
+	})
+
+	return sessions, nil
+}
+
+// CollectUsageEvents scans baseDir for Claude Code session files and returns timestamped usage events.
+// It uses the same local file discovery semantics as CollectSessions.
+func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
+	paths, pathToSlug, err := collectSessionPaths(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var events []provider.UsageEvent
+	for _, path := range paths {
+		parsed, err := parseUsageEvents(path, pathToSlug[path])
+		if err != nil {
+			continue
+		}
+		events = append(events, parsed...)
+	}
+	return events, nil
+}
+
+func collectSessionPaths(baseDir string) ([]string, map[string]string, error) {
 	var baseDirs []string
 	isExplicit := baseDir != ""
 	if isExplicit {
@@ -63,7 +97,7 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 	} else {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		baseDirs = []string{
 			filepath.Join(home, ".claude", "projects"),
@@ -79,21 +113,16 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 		if err := collectPaths(dir, &paths, pathToSlug); err != nil {
 			if isExplicit {
 				// Explicit --claude-dir: propagate all errors
-				return nil, err
+				return nil, nil, err
 			}
 			// Default dirs: skip non-existent, propagate other errors
 			if !errors.Is(err, os.ErrNotExist) {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
 
-	// Phase 2: Parse all sessions in parallel
-	sessions := provider.ParseParallel(paths, 0, func(path string) (provider.SessionInfo, error) {
-		return parseSession(path, pathToSlug[path])
-	})
-
-	return sessions, nil
+	return paths, pathToSlug, nil
 }
 
 // collectPaths walks a base directory and appends discovered JSONL session file paths.
@@ -266,6 +295,131 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 	info.EndTime = endTime
 
 	return info, nil
+}
+
+// parseUsageEvents parses timestamped Claude Code usage events from one JSONL session file.
+func parseUsageEvents(path, projectSlug string) ([]provider.UsageEvent, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	type usageEventEntry struct {
+		event provider.UsageEvent
+	}
+
+	dedupUsage := make(map[string]usageEventEntry)
+	var uniqueCounter int
+	var sessionID string
+	var modelName string
+	var title string
+
+	scanner := bufio.NewScanner(f)
+	// Increase buffer size for long lines
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var event claudeEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			// Skip malformed lines
+			continue
+		}
+
+		if sessionID == "" && event.SessionID != "" {
+			sessionID = event.SessionID
+		}
+
+		switch event.Type {
+		case "user":
+			if event.UserType != "" && event.UserType != "external" {
+				continue
+			}
+			if title == "" {
+				title = extractUserText(event.Message.Content)
+			}
+
+		case "assistant":
+			model := strings.TrimSpace(event.Message.Model)
+			if modelName == "" && model != "" {
+				modelName = model
+			}
+			if event.Message.Usage == nil {
+				continue
+			}
+
+			ts, err := time.Parse(time.RFC3339Nano, event.Timestamp)
+			if err != nil || ts.IsZero() {
+				continue
+			}
+
+			key := dedupKey(event.Message.ID, event.RequestID, &uniqueCounter)
+			dedupUsage[key] = usageEventEntry{
+				event: provider.UsageEvent{
+					ProviderName: "claude",
+					ModelName:    model,
+					SessionID:    event.SessionID,
+					WorkDirHash:  projectSlug,
+					Timestamp:    ts,
+					TokenUsage:   tokenUsageFromClaudeUsage(event.Message.Usage),
+					SourcePath:   path,
+					EventID:      key,
+				},
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	if sessionID == "" {
+		base := filepath.Base(path)
+		sessionID = strings.TrimSuffix(base, ".jsonl")
+	}
+	title = truncateTitle(title, 80)
+
+	events := make([]provider.UsageEvent, 0, len(dedupUsage))
+	for _, entry := range dedupUsage {
+		event := entry.event
+		if event.SessionID == "" {
+			event.SessionID = sessionID
+		}
+		if event.ModelName == "" {
+			event.ModelName = modelName
+		}
+		event.Title = title
+		events = append(events, event)
+	}
+
+	sort.Slice(events, func(i, j int) bool {
+		if !events[i].Timestamp.Equal(events[j].Timestamp) {
+			return events[i].Timestamp.Before(events[j].Timestamp)
+		}
+		if events[i].SourcePath != events[j].SourcePath {
+			return events[i].SourcePath < events[j].SourcePath
+		}
+		return events[i].EventID < events[j].EventID
+	})
+
+	return events, nil
+}
+
+func tokenUsageFromClaudeUsage(usage *claudeUsage) provider.TokenUsage {
+	if usage == nil {
+		return provider.TokenUsage{}
+	}
+	return provider.TokenUsage{
+		InputOther:       usage.InputTokens,
+		InputCacheRead:   usage.CacheReadInputTokens,
+		InputCacheCreate: usage.CacheCreationInputTokens,
+		Output:           usage.OutputTokens,
+	}
 }
 
 // dedupKey builds a deduplication key from messageId and requestId.
