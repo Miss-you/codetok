@@ -208,8 +208,9 @@ Implementation rules:
 
 - Normalize nil `loc` to `time.Local`.
 - Date key is `event.Timestamp.In(loc).Format("2006-01-02")`.
-- `DailyStats.Sessions` increments once per distinct non-empty `SessionID` per date/group.
-- If `SessionID` is empty, use `SourcePath + "#" + EventID` as a stable distinct fallback.
+- `DailyStats.Sessions` increments once per distinct session/container key per date/group.
+- Build that key from `SessionID` when present; otherwise use the session-level `SourcePath`.
+- Do not include per-event identifiers such as `EventID` in the session-count fallback, because that would inflate `Sessions` to event count for logs missing `SessionID`.
 - Preserve `ProviderName`, `GroupBy`, `Group`, and multi-provider behavior from session aggregation.
 
 **Step 4: Add collector helper tests**
