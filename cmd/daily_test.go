@@ -47,14 +47,25 @@ func (p *dailyEventTestProvider) CollectUsageEvents(baseDir string) ([]provider.
 }
 
 func registerDailyEventTestProvider(events []provider.UsageEvent, sessions []provider.SessionInfo) *dailyEventTestProvider {
-	id := atomic.AddUint64(&dailyEventTestProviderCounter, 1)
+	name := newDailyEventTestProviderName()
+	for i := range events {
+		events[i].ProviderName = name
+	}
+	for i := range sessions {
+		sessions[i].ProviderName = name
+	}
 	p := &dailyEventTestProvider{
-		name:     fmt.Sprintf("daily-event-test-%d", id),
+		name:     name,
 		events:   events,
 		sessions: sessions,
 	}
 	provider.Register(p)
 	return p
+}
+
+func newDailyEventTestProviderName() string {
+	id := atomic.AddUint64(&dailyEventTestProviderCounter, 1)
+	return fmt.Sprintf("daily-event-test-%d", id)
 }
 
 func TestResolveDailyDateRange_DefaultWindow(t *testing.T) {
@@ -264,7 +275,7 @@ func TestDailyJSONUsesEventTimezoneDateKeys(t *testing.T) {
 	if got[0].Date != "2026-04-16" {
 		t.Fatalf("Date = %q, want 2026-04-16: %#v", got[0].Date, got[0])
 	}
-	if got[0].GroupBy != "cli" || got[0].Group != "daily-event-test" || got[0].ProviderName != "daily-event-test" {
+	if got[0].GroupBy != "cli" || got[0].Group != fake.name || got[0].ProviderName != fake.name {
 		t.Fatalf("group metadata mismatch: %#v", got[0])
 	}
 	if got[0].TokenUsage.Total() != 11 {
@@ -275,7 +286,7 @@ func TestDailyJSONUsesEventTimezoneDateKeys(t *testing.T) {
 func TestDailyDateWindowValidationPrecedesCollection(t *testing.T) {
 	boom := errors.New("provider should not be collected")
 	fake := &dailyEventTestProvider{
-		name:       "daily-event-validation-test",
+		name:       newDailyEventTestProviderName(),
 		eventErr:   boom,
 		sessionErr: boom,
 	}

@@ -44,3 +44,16 @@ Reviewer notes:
 Residual risk:
 
 - Claude subagent daily `sessions` count now follows the event aggregation contract: distinct contributing session IDs. Parent and subagent files sharing `session-main` report `1`, while `session` still reports two session rows.
+
+## PR AI Review
+
+Copilot left two test-quality comments:
+
+- Use a unique provider name in the validation-order fake provider to avoid global registry collisions.
+- Keep fake `UsageEvent.ProviderName` and `SessionInfo.ProviderName` aligned with the selected fake provider name.
+
+Actions:
+
+- Added `newDailyEventTestProviderName`.
+- Updated `registerDailyEventTestProvider` to stamp events and sessions with the generated provider name.
+- Updated the validation-order test to use a generated provider name.

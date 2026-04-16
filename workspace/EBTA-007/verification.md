@@ -18,3 +18,13 @@ Final focused verification before closing:
 - `go test -count=1 ./cmd -run 'Test(Daily|BuildDailyStatsFromUsageEvents)'` passed.
 - `openspec validate event-based-token-aggregation-daily --strict` passed.
 - `git diff --check HEAD` passed.
+
+PR review fix verification:
+
+- `go test -count=1 ./cmd -run 'Test(DailyJSON|DailyDateWindowValidationPrecedesCollection|BuildDailyStatsFromUsageEvents)'` passed.
+- `go test -count=1 ./cmd -run 'Test(Daily|BuildDailyStatsFromUsageEvents)'` passed.
+- `make fmt` passed.
+- `make test` passed.
+- `make vet` passed.
+- `make build` passed.
+- `make lint` passed with `0 issues`.
