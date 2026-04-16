@@ -332,6 +332,21 @@ func TestCollectUsageEventsFromProviders_ReturnsSessionFallbackErrors(t *testing
 	}
 }
 
+func TestCollectUsageEvents_UsesRegisteredProviders(t *testing.T) {
+	cmd := newCollectTestCommand()
+	if err := cmd.Flags().Set("provider", "nonexistent"); err != nil {
+		t.Fatalf("setting --provider: %v", err)
+	}
+
+	events, err := collectUsageEvents(cmd)
+	if err != nil {
+		t.Fatalf("collectUsageEvents returned error: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %#v, want none for unmatched provider", events)
+	}
+}
+
 func newCollectTestCommand(providerNames ...string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("provider", "", "")
