@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,15 +42,18 @@ type wireEvent struct {
 
 // statusPayload holds the StatusUpdate payload.
 type statusPayload struct {
-	Model      string `json:"model"`
-	ModelName  string `json:"model_name"`
-	ModelID    string `json:"model_id"`
-	TokenUsage struct {
-		InputOther         int `json:"input_other"`
-		Output             int `json:"output"`
-		InputCacheRead     int `json:"input_cache_read"`
-		InputCacheCreation int `json:"input_cache_creation"`
-	} `json:"token_usage"`
+	Model      string             `json:"model"`
+	ModelName  string             `json:"model_name"`
+	ModelID    string             `json:"model_id"`
+	MessageID  string             `json:"message_id"`
+	TokenUsage *tokenUsagePayload `json:"token_usage"`
+}
+
+type tokenUsagePayload struct {
+	InputOther         int `json:"input_other"`
+	Output             int `json:"output"`
+	InputCacheRead     int `json:"input_cache_read"`
+	InputCacheCreation int `json:"input_cache_creation"`
 }
 
 // metadata represents the metadata.json file.
@@ -115,6 +119,54 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 	return sessions, nil
 }
 
+// CollectUsageEvents scans baseDir for Kimi session directories and returns native usage events.
+func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
+	if baseDir == "" {
+		baseDir = defaultKimiSessionsDir()
+	}
+	sessionModelIndex := loadSessionModelsFromLogs(detectKimiLogsDir(baseDir))
+
+	var events []provider.UsageEvent
+
+	workDirs, err := os.ReadDir(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, wd := range workDirs {
+		if !wd.IsDir() {
+			continue
+		}
+		workDirHash := wd.Name()
+		workDirPath := filepath.Join(baseDir, workDirHash)
+
+		sessionDirs, err := os.ReadDir(workDirPath)
+		if err != nil {
+			continue
+		}
+
+		for _, sd := range sessionDirs {
+			if !sd.IsDir() {
+				continue
+			}
+			sessionPath := filepath.Join(workDirPath, sd.Name())
+			wirePath := filepath.Join(sessionPath, "wire.jsonl")
+
+			if _, err := os.Stat(wirePath); err != nil {
+				continue
+			}
+
+			sessionEvents, err := parseSessionUsageEvents(sessionPath, workDirHash, sessionModelIndex)
+			if err != nil {
+				continue
+			}
+			events = append(events, sessionEvents...)
+		}
+	}
+
+	return events, nil
+}
+
 // parseSession parses a single session directory.
 func parseSession(sessionPath, workDirHash string, sessionModelIndex map[string]string) (provider.SessionInfo, error) {
 	info := provider.SessionInfo{
@@ -152,6 +204,43 @@ func parseSession(sessionPath, workDirHash string, sessionModelIndex map[string]
 	}
 
 	return info, nil
+}
+
+func parseSessionUsageEvents(sessionPath, workDirHash string, sessionModelIndex map[string]string) ([]provider.UsageEvent, error) {
+	baseEvent := provider.UsageEvent{
+		ProviderName: "kimi",
+		WorkDirHash:  workDirHash,
+	}
+
+	meta, err := parseMetadata(filepath.Join(sessionPath, "metadata.json"))
+	if err == nil {
+		baseEvent.SessionID = meta.SessionID
+		baseEvent.Title = meta.Title
+		baseEvent.ModelName = normalizeKimiModelName(firstNonEmpty(meta.ModelName, meta.Model, meta.ModelID))
+	} else {
+		baseEvent.SessionID = filepath.Base(sessionPath)
+	}
+
+	wirePath := filepath.Join(sessionPath, "wire.jsonl")
+	events, modelName, err := parseKimiUsageEvents(wirePath, baseEvent)
+	if err != nil {
+		return nil, err
+	}
+
+	resolvedModelName := baseEvent.ModelName
+	if resolvedModelName == "" {
+		resolvedModelName = normalizeKimiModelName(modelName)
+	}
+	if resolvedModelName == "" {
+		resolvedModelName = modelNameFromLogFallback(baseEvent.SessionID, sessionPath, sessionModelIndex)
+	}
+	if resolvedModelName != "" {
+		for i := range events {
+			events[i].ModelName = resolvedModelName
+		}
+	}
+
+	return events, nil
 }
 
 // parseMetadata reads and parses a metadata.json file.
@@ -206,10 +295,14 @@ func parseWireJSONL(path string) (provider.TokenUsage, int, time.Time, time.Time
 			if modelName == "" {
 				modelName = firstNonEmpty(payload.ModelName, payload.Model, payload.ModelID)
 			}
-			usage.InputOther += payload.TokenUsage.InputOther
-			usage.Output += payload.TokenUsage.Output
-			usage.InputCacheRead += payload.TokenUsage.InputCacheRead
-			usage.InputCacheCreate += payload.TokenUsage.InputCacheCreation
+			tokenUsage, ok := tokenUsageFromStatusPayload(payload)
+			if !ok {
+				continue
+			}
+			usage.InputOther += tokenUsage.InputOther
+			usage.Output += tokenUsage.Output
+			usage.InputCacheRead += tokenUsage.InputCacheRead
+			usage.InputCacheCreate += tokenUsage.InputCacheCreate
 
 		case "TurnBegin":
 			turns++
@@ -227,6 +320,85 @@ func parseWireJSONL(path string) (provider.TokenUsage, int, time.Time, time.Time
 	}
 
 	return usage, turns, startTime, endTime, modelName, scanner.Err()
+}
+
+func parseKimiUsageEvents(wirePath string, baseEvent provider.UsageEvent) ([]provider.UsageEvent, string, error) {
+	f, err := os.Open(wirePath)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+
+	var events []provider.UsageEvent
+	var modelName string
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var event wireEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			continue
+		}
+		if event.Message.Type != "StatusUpdate" {
+			continue
+		}
+
+		var payload statusPayload
+		if err := json.Unmarshal(event.Message.Payload, &payload); err != nil {
+			continue
+		}
+		if modelName == "" {
+			modelName = firstNonEmpty(payload.ModelName, payload.Model, payload.ModelID)
+		}
+
+		tokenUsage, ok := tokenUsageFromStatusPayload(payload)
+		if !ok {
+			continue
+		}
+
+		usageEvent := baseEvent
+		if usageEvent.ProviderName == "" {
+			usageEvent.ProviderName = "kimi"
+		}
+		if usageEvent.ModelName == "" {
+			usageEvent.ModelName = normalizeKimiModelName(modelName)
+		}
+		usageEvent.Timestamp = timeFromUnix(event.Timestamp)
+		usageEvent.TokenUsage = tokenUsage
+		usageEvent.SourcePath = wirePath
+		usageEvent.EventID = kimiUsageEventID(wirePath, lineNo, payload.MessageID)
+		events = append(events, usageEvent)
+	}
+
+	return events, modelName, scanner.Err()
+}
+
+func tokenUsageFromStatusPayload(payload statusPayload) (provider.TokenUsage, bool) {
+	if payload.TokenUsage == nil {
+		return provider.TokenUsage{}, false
+	}
+	return provider.TokenUsage{
+		InputOther:       payload.TokenUsage.InputOther,
+		Output:           payload.TokenUsage.Output,
+		InputCacheRead:   payload.TokenUsage.InputCacheRead,
+		InputCacheCreate: payload.TokenUsage.InputCacheCreation,
+	}, true
+}
+
+func kimiUsageEventID(wirePath string, lineNo int, messageID string) string {
+	messageID = strings.TrimSpace(messageID)
+	if messageID != "" {
+		return wirePath + "#" + messageID
+	}
+	return wirePath + ":" + strconv.Itoa(lineNo)
 }
 
 // timeFromUnix converts a Unix timestamp (float64 seconds) to time.Time.
