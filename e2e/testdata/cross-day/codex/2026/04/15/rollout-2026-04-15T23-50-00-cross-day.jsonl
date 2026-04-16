@@ -1,0 +1,5 @@
+{"timestamp":"2026-04-15T23:50:00Z","type":"session_meta","payload":{"id":"codex-cross-day","timestamp":"2026-04-15T23:50:00Z","cwd":"/tmp/cross-day"}}
+{"timestamp":"2026-04-15T23:51:00Z","type":"turn_context","payload":{"model":"gpt-5.4"}}
+{"timestamp":"2026-04-15T23:52:00Z","type":"event_msg","payload":{"type":"user_message","message":"codex cross-day"}}
+{"timestamp":"2026-04-15T23:55:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":300,"reasoning_output_tokens":0,"total_tokens":1300}}}}
+{"timestamp":"2026-04-16T00:10:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1500,"cached_input_tokens":250,"output_tokens":450,"reasoning_output_tokens":0,"total_tokens":1950}}}}
