@@ -114,6 +114,7 @@ Final acceptance requires:
 
 - Modify: `provider/provider.go`
 - Modify: `cmd/collect.go`
+- Modify: `cmd/collect_test.go`
 - Modify: `cmd/daily.go`
 - Create: `stats/events.go`
 - Create: `stats/events_test.go`
