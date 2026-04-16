@@ -33,6 +33,19 @@ type SessionInfo struct {
 	TokenUsage   TokenUsage
 }
 
+// UsageEvent represents a timestamped token usage delta from a provider log.
+type UsageEvent struct {
+	ProviderName string
+	ModelName    string
+	SessionID    string
+	Title        string
+	WorkDirHash  string
+	Timestamp    time.Time
+	TokenUsage   TokenUsage
+	SourcePath   string
+	EventID      string
+}
+
 // DailyStats represents aggregated token usage for a single day.
 type DailyStats struct {
 	Date string `json:"date"` // "2006-01-02"
@@ -50,4 +63,10 @@ type DailyStats struct {
 type Provider interface {
 	Name() string
 	CollectSessions(baseDir string) ([]SessionInfo, error)
+}
+
+// UsageEventProvider is implemented by providers that can emit native usage events.
+type UsageEventProvider interface {
+	Provider
+	CollectUsageEvents(baseDir string) ([]UsageEvent, error)
 }
