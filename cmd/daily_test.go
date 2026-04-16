@@ -689,7 +689,7 @@ func assertContainsAll(t *testing.T, text string, values ...string) {
 	}
 }
 
-func captureStdout(t *testing.T, fn func()) string {
+func captureStdout(t *testing.T, fn func()) (output string) {
 	t.Helper()
 	oldStdout := os.Stdout
 	r, w, err := os.Pipe()
@@ -698,6 +698,12 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	os.Stdout = w
 	done := make(chan string, 1)
+	defer func() {
+		_ = w.Close()
+		os.Stdout = oldStdout
+		output = <-done
+		_ = r.Close()
+	}()
 	go func() {
 		var buf bytes.Buffer
 		_, _ = io.Copy(&buf, r)
@@ -705,11 +711,6 @@ func captureStdout(t *testing.T, fn func()) string {
 	}()
 
 	fn()
-
-	_ = w.Close()
-	os.Stdout = oldStdout
-	output := <-done
-	_ = r.Close()
 	return output
 }
 
