@@ -9,10 +9,6 @@ import (
 	"github.com/miss-you/codetok/provider"
 )
 
-func collectSessions(cmd *cobra.Command) ([]provider.SessionInfo, error) {
-	return collectSessionsFromProviders(cmd, provider.Registry())
-}
-
 func collectUsageEvents(cmd *cobra.Command) ([]provider.UsageEvent, error) {
 	return collectUsageEventsFromProviders(cmd, provider.Registry())
 }

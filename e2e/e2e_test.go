@@ -563,16 +563,16 @@ func TestClaudeSubagentSessions_JSONOutput(t *testing.T) {
 	var sessions []struct {
 		SessionID    string              `json:"session_id"`
 		ProviderName string              `json:"provider"`
-		ModelName    string              `json:"model"`
 		TokenUsage   provider.TokenUsage `json:"token_usage"`
 	}
 	if err := json.Unmarshal([]byte(output), &sessions); err != nil {
 		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
 	}
 
-	// Should have 2 sessions: main + subagent
-	if len(sessions) != 2 {
-		t.Fatalf("expected 2 sessions (main + subagent), got %d: %s", len(sessions), output)
+	// Session event aggregation groups usage by provider/session ID. The parent
+	// and subagent fixture files share session-main, so they combine into one row.
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 combined session, got %d: %s", len(sessions), output)
 	}
 
 	// Verify both are from claude provider
