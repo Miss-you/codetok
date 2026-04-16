@@ -85,6 +85,12 @@ type codexTokenUsage struct {
 	TotalTokens           int `json:"total_tokens"`
 }
 
+type codexUsageState struct {
+	previousTotal  *codexTokenUsage
+	pendingLast    codexTokenUsage
+	hasPendingLast bool
+}
+
 func (u codexTokenUsage) toProviderTokenUsage() provider.TokenUsage {
 	return provider.TokenUsage{
 		InputOther:     u.InputTokens - u.CachedInputTokens,
@@ -209,7 +215,7 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 
 	var usage provider.TokenUsage
 	var hasUsage bool
-	var previousTotal *codexTokenUsage
+	var usageState codexUsageState
 	var startTime, endTime time.Time
 	var turns int
 
@@ -290,7 +296,7 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 				if err := json.Unmarshal(msg.Info, &tci); err != nil {
 					continue
 				}
-				delta, ok := codexUsageDelta(tci, &previousTotal)
+				delta, ok := codexUsageDelta(tci, &usageState)
 				if ok && delta.Total() != 0 {
 					addCodexTokenUsage(&usage, delta)
 					hasUsage = true
@@ -329,7 +335,7 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 	var sessionID string
 	var title string
 	var currentModel string
-	var previousTotal *codexTokenUsage
+	var usageState codexUsageState
 	var lineNumber int
 
 	scanner := bufio.NewScanner(f)
@@ -395,14 +401,14 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 				if err := json.Unmarshal(msg.Info, &tci); err != nil {
 					continue
 				}
-				usage, ok := codexUsageDelta(tci, &previousTotal)
+				usage, ok := codexUsageDelta(tci, &usageState)
 				if !ok || usage.Total() == 0 {
 					continue
 				}
 				events = append(events, provider.UsageEvent{
 					ProviderName: "codex",
 					ModelName:    currentModel,
-					SessionID:    firstNonEmptyString(sessionID, path),
+					SessionID:    sessionID,
 					Title:        title,
 					Timestamp:    ts,
 					TokenUsage:   usage,
@@ -424,18 +430,15 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 	return events, nil
 }
 
-func codexUsageDelta(info tokenCountInfo, previousTotal **codexTokenUsage) (provider.TokenUsage, bool) {
+func codexUsageDelta(info tokenCountInfo, state *codexUsageState) (provider.TokenUsage, bool) {
 	if info.LastTokenUsage != nil {
 		last := *info.LastTokenUsage
 		if info.TotalTokenUsage != nil {
 			total := *info.TotalTokenUsage
-			*previousTotal = &total
-		} else if *previousTotal != nil {
-			total := addCodexRawTokenUsage(**previousTotal, last)
-			*previousTotal = &total
+			state.previousTotal = &total
+			state.clearPendingLast()
 		} else {
-			total := last
-			*previousTotal = &total
+			state.addPendingLast(last)
 		}
 		return last.toProviderTokenUsage(), true
 	}
@@ -444,21 +447,26 @@ func codexUsageDelta(info tokenCountInfo, previousTotal **codexTokenUsage) (prov
 	}
 
 	total := *info.TotalTokenUsage
-	defer func() {
-		*previousTotal = &total
-	}()
-
-	if *previousTotal == nil || codexTotalDecreased(total, **previousTotal) {
-		return total.toProviderTokenUsage(), true
+	delta := total
+	if state.previousTotal != nil && !codexTotalDecreased(total, *state.previousTotal) {
+		delta = subtractCodexRawTokenUsage(total, *state.previousTotal)
 	}
-
-	delta := codexTokenUsage{
-		InputTokens:       total.InputTokens - (*previousTotal).InputTokens,
-		CachedInputTokens: total.CachedInputTokens - (*previousTotal).CachedInputTokens,
-		OutputTokens:      total.OutputTokens - (*previousTotal).OutputTokens,
-		TotalTokens:       total.TotalTokens - (*previousTotal).TotalTokens,
+	if state.hasPendingLast && canSubtractCodexRawTokenUsage(delta, state.pendingLast) {
+		delta = subtractCodexRawTokenUsage(delta, state.pendingLast)
 	}
+	state.previousTotal = &total
+	state.clearPendingLast()
 	return delta.toProviderTokenUsage(), true
+}
+
+func (s *codexUsageState) addPendingLast(usage codexTokenUsage) {
+	s.pendingLast = addCodexRawTokenUsage(s.pendingLast, usage)
+	s.hasPendingLast = true
+}
+
+func (s *codexUsageState) clearPendingLast() {
+	s.pendingLast = codexTokenUsage{}
+	s.hasPendingLast = false
 }
 
 func addCodexRawTokenUsage(dst, src codexTokenUsage) codexTokenUsage {
@@ -469,6 +477,24 @@ func addCodexRawTokenUsage(dst, src codexTokenUsage) codexTokenUsage {
 		ReasoningOutputTokens: dst.ReasoningOutputTokens + src.ReasoningOutputTokens,
 		TotalTokens:           dst.TotalTokens + src.TotalTokens,
 	}
+}
+
+func subtractCodexRawTokenUsage(current, previous codexTokenUsage) codexTokenUsage {
+	return codexTokenUsage{
+		InputTokens:           current.InputTokens - previous.InputTokens,
+		CachedInputTokens:     current.CachedInputTokens - previous.CachedInputTokens,
+		OutputTokens:          current.OutputTokens - previous.OutputTokens,
+		ReasoningOutputTokens: current.ReasoningOutputTokens - previous.ReasoningOutputTokens,
+		TotalTokens:           current.TotalTokens - previous.TotalTokens,
+	}
+}
+
+func canSubtractCodexRawTokenUsage(current, previous codexTokenUsage) bool {
+	return current.InputTokens >= previous.InputTokens &&
+		current.CachedInputTokens >= previous.CachedInputTokens &&
+		current.OutputTokens >= previous.OutputTokens &&
+		current.ReasoningOutputTokens >= previous.ReasoningOutputTokens &&
+		current.TotalTokens >= previous.TotalTokens
 }
 
 func codexTotalDecreased(current, previous codexTokenUsage) bool {
@@ -488,15 +514,6 @@ func addCodexTokenUsage(dst *provider.TokenUsage, src provider.TokenUsage) {
 func firstCodexModel(candidates ...string) string {
 	for _, candidate := range candidates {
 		if isLikelyCodexModelName(candidate) {
-			return strings.TrimSpace(candidate)
-		}
-	}
-	return ""
-}
-
-func firstNonEmptyString(candidates ...string) string {
-	for _, candidate := range candidates {
-		if strings.TrimSpace(candidate) != "" {
 			return strings.TrimSpace(candidate)
 		}
 	}

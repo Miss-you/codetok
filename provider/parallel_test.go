@@ -81,6 +81,50 @@ func TestParseParallel_EmptyInput(t *testing.T) {
 	}
 }
 
+func TestParseUsageEventsParallel_EmptyInput(t *testing.T) {
+	results := ParseUsageEventsParallel(nil, 4, func(path string) ([]UsageEvent, error) {
+		t.Error("parseFn should not be called for empty input")
+		return nil, nil
+	})
+	if results != nil {
+		t.Errorf("expected nil for empty input, got %v", results)
+	}
+
+	results = ParseUsageEventsParallel([]string{}, 4, func(path string) ([]UsageEvent, error) {
+		t.Error("parseFn should not be called for empty input")
+		return nil, nil
+	})
+	if results != nil {
+		t.Errorf("expected nil for empty slice, got %v", results)
+	}
+}
+
+func TestParseUsageEventsParallel_ErrorSkipped(t *testing.T) {
+	items := []string{"ok-1", "fail-1", "ok-2", "fail-2", "ok-3"}
+
+	parseFn := func(path string) ([]UsageEvent, error) {
+		if path[0:4] == "fail" {
+			return nil, fmt.Errorf("parse error for %s", path)
+		}
+		return []UsageEvent{{SessionID: path}}, nil
+	}
+
+	results := ParseUsageEventsParallel(items, 2, parseFn)
+	if len(results) != 3 {
+		t.Errorf("expected 3 results (errors skipped), got %d", len(results))
+	}
+
+	seen := make(map[string]bool)
+	for _, r := range results {
+		seen[r.SessionID] = true
+	}
+	for _, expected := range []string{"ok-1", "ok-2", "ok-3"} {
+		if !seen[expected] {
+			t.Errorf("missing result for %s", expected)
+		}
+	}
+}
+
 func TestParseParallel_WorkerLimit(t *testing.T) {
 	const maxWorkers = 3
 	const totalItems = 20
@@ -109,6 +153,45 @@ func TestParseParallel_WorkerLimit(t *testing.T) {
 	}
 
 	results := ParseParallel(items, maxWorkers, parseFn)
+	if len(results) != totalItems {
+		t.Errorf("expected %d results, got %d", totalItems, len(results))
+	}
+
+	observed := maxConcurrent.Load()
+	if observed > int64(maxWorkers) {
+		t.Errorf("concurrency exceeded limit: observed %d, limit %d", observed, maxWorkers)
+	}
+	if observed == 0 {
+		t.Error("no concurrency observed; expected at least 1 concurrent worker")
+	}
+}
+
+func TestParseUsageEventsParallel_WorkerLimit(t *testing.T) {
+	const maxWorkers = 3
+	const totalItems = 20
+
+	var concurrent atomic.Int64
+	var maxConcurrent atomic.Int64
+
+	items := make([]string, totalItems)
+	for i := range items {
+		items[i] = fmt.Sprintf("item-%d", i)
+	}
+
+	parseFn := func(path string) ([]UsageEvent, error) {
+		cur := concurrent.Add(1)
+		for {
+			old := maxConcurrent.Load()
+			if cur <= old || maxConcurrent.CompareAndSwap(old, cur) {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+		concurrent.Add(-1)
+		return []UsageEvent{{SessionID: path}}, nil
+	}
+
+	results := ParseUsageEventsParallel(items, maxWorkers, parseFn)
 	if len(results) != totalItems {
 		t.Errorf("expected %d results, got %d", totalItems, len(results))
 	}
