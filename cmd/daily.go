@@ -347,13 +347,6 @@ func aggregateTotalsByGroup(daily []provider.DailyStats) []groupTotal {
 	return result
 }
 
-func mergeTokenUsage(dst *provider.TokenUsage, src provider.TokenUsage) {
-	dst.InputOther += src.InputOther
-	dst.Output += src.Output
-	dst.InputCacheRead += src.InputCacheRead
-	dst.InputCacheCreate += src.InputCacheCreate
-}
-
 func shortDateLabel(date string) string {
 	if len(date) == len("2006-01-02") {
 		return date[5:]

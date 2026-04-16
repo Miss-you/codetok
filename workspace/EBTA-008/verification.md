@@ -34,6 +34,7 @@ After code review cleanup, final gates also passed:
 Built binary smoke:
 
 ```bash
+empty=$(mktemp -d)
 ./bin/codetok --claude-dir "$(pwd)/e2e/testdata/claude-sessions" \
   --codex-dir "$empty" --cursor-dir "$empty" --kimi-dir "$empty" \
   session --json --since 2026-02-15 --until 2026-02-15 --timezone UTC

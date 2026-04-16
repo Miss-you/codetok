@@ -575,7 +575,7 @@ func TestClaudeSubagentSessions_JSONOutput(t *testing.T) {
 		t.Fatalf("expected 1 combined session, got %d: %s", len(sessions), output)
 	}
 
-	// Verify both are from claude provider
+	// Verify the combined row is from the claude provider.
 	for _, s := range sessions {
 		if s.ProviderName != "claude" {
 			t.Errorf("expected provider %q, got %q", "claude", s.ProviderName)
