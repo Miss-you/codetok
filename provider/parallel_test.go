@@ -63,6 +63,30 @@ func TestParseParallel_ErrorSkipped(t *testing.T) {
 	}
 }
 
+func TestParseParallel_GenericResultType(t *testing.T) {
+	items := []string{"a", "b"}
+	results := ParseParallel(items, 2, func(path string) ([]UsageEvent, error) {
+		return []UsageEvent{{SessionID: path}}, nil
+	})
+
+	if len(results) != 2 {
+		t.Fatalf("got %d result batches, want 2", len(results))
+	}
+
+	seen := make(map[string]bool)
+	for _, batch := range results {
+		if len(batch) != 1 {
+			t.Fatalf("batch length = %d, want 1", len(batch))
+		}
+		seen[batch[0].SessionID] = true
+	}
+	for _, item := range items {
+		if !seen[item] {
+			t.Fatalf("missing result for %s", item)
+		}
+	}
+}
+
 func TestParseParallel_EmptyInput(t *testing.T) {
 	results := ParseParallel(nil, 4, func(path string) (SessionInfo, error) {
 		t.Error("parseFn should not be called for empty input")
