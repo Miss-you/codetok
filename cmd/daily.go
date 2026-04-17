@@ -142,8 +142,9 @@ func aggregateDailyUsageEventsFromProvidersInRange(
 	sinceDate, untilDate string,
 ) ([]provider.DailyStats, error) {
 	aggregator := stats.NewDailyEventAggregator(groupBy, loc)
+	dateFilter := stats.NewEventDateRangeFilter(sinceDate, untilDate, loc)
 	err := forEachUsageEventFromProvidersInRange(cmd, providers, opts, func(event provider.UsageEvent) error {
-		if stats.EventInDateRange(event, sinceDate, untilDate, loc) {
+		if dateFilter.Contains(event) {
 			aggregator.Add(event)
 		}
 		return nil

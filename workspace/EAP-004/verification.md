@@ -50,8 +50,8 @@ go test -run '^$' -bench BenchmarkDailyAggregationMaterializedVsStreaming -bench
 Result:
 
 ```text
-BenchmarkDailyAggregationMaterializedVsStreaming/materialized-10    16870784 ns/op  60278209 B/op  100108 allocs/op
-BenchmarkDailyAggregationMaterializedVsStreaming/streaming-10       15011137 ns/op   2410066 B/op  100076 allocs/op
+BenchmarkDailyAggregationMaterializedVsStreaming/materialized-10     9948878 ns/op  25470600 B/op  100081 allocs/op
+BenchmarkDailyAggregationMaterializedVsStreaming/streaming-10        8022923 ns/op   2410068 B/op  100076 allocs/op
 ```
 
 Meaning: the streaming daily path removes the large command-level event-slice allocations in the synthetic benchmark. Provider-level parser allocations are intentionally out of scope for EAP-004.

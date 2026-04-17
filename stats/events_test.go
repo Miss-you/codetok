@@ -195,6 +195,36 @@ func TestDailyEventAggregator_MatchesMaterializedAggregation(t *testing.T) {
 	}
 }
 
+func TestDailyEventAggregator_AddNormalizesLocationWithExistingMap(t *testing.T) {
+	aggregator := DailyEventAggregator{
+		dimension: AggregateDimensionCLI,
+		dayMap:    make(map[dailyEventKey]*dailyEventAggregate),
+	}
+
+	aggregator.Add(makeUsageEvent("s1", "codex", "", time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC), 100, 10))
+
+	got := aggregator.Results()
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1: %#v", len(got), got)
+	}
+	if got[0].Date != "2026-04-16" || got[0].TokenUsage.Total() != 110 {
+		t.Fatalf("row = %#v, want 2026-04-16 total 110", got[0])
+	}
+}
+
+func TestEventDateRangeFilter_MatchesEventInDateRange(t *testing.T) {
+	loc := time.FixedZone("UTC+8", 8*3600)
+	event := makeUsageEvent("s1", "codex", "", time.Date(2026, 4, 15, 16, 30, 0, 0, time.UTC), 100, 10)
+
+	filter := NewEventDateRangeFilter(" 2026-04-16 ", " 2026-04-16 ", loc)
+
+	got := filter.Contains(event)
+	want := EventInDateRange(event, " 2026-04-16 ", " 2026-04-16 ", loc)
+	if got != want {
+		t.Fatalf("filter.Contains = %v, want EventInDateRange result %v", got, want)
+	}
+}
+
 func TestFilterEventsByDateRange_UsesLocalizedInclusiveDateKeys(t *testing.T) {
 	utc := time.UTC
 	shanghai := time.FixedZone("UTC+8", 8*3600)

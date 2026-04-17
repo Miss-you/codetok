@@ -77,3 +77,4 @@
 - 2026-04-17 15:23:00 CST: Focused RED/GREEN checks passed for stats incremental aggregation and daily JSON/dashboard parity; moved `EAP-004` to `verifying`.
 - 2026-04-17 15:35:00 CST: Verification passed (`make fmt`, `make test`, `make vet`, `make lint`, `make build`, focused tests, static daily no-allEvents check, and built-binary smoke); moved `EAP-004` to `review`.
 - 2026-04-17 15:38:00 CST: Review recorded no must-fix issues; closed `EAP-004` as `done`.
+- 2026-04-17 16:13:24 CST: Addressed Copilot PR review comments by normalizing the aggregator on every add, reusing a date-range filter in hot paths, and restoring bulk append in the materialized adapter.

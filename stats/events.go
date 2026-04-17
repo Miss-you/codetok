@@ -37,9 +37,12 @@ func NewDailyEventAggregator(dimension AggregateDimension, loc *time.Location) *
 
 // Add includes one event in the daily aggregate.
 func (a *DailyEventAggregator) Add(e provider.UsageEvent) {
+	if a == nil {
+		return
+	}
+	a.dimension = normalizeAggregateDimension(a.dimension)
+	a.loc = normalizeEventLocation(a.loc)
 	if a.dayMap == nil {
-		a.dimension = normalizeAggregateDimension(a.dimension)
-		a.loc = normalizeEventLocation(a.loc)
 		a.dayMap = make(map[dailyEventKey]*dailyEventAggregate)
 	}
 	date := e.Timestamp.In(a.loc).Format("2006-01-02")
@@ -128,33 +131,50 @@ func FilterEventsByDateRange(events []provider.UsageEvent, sinceDate, untilDate 
 	if len(events) == 0 {
 		return nil
 	}
-	loc = normalizeEventLocation(loc)
-	sinceDate = strings.TrimSpace(sinceDate)
-	untilDate = strings.TrimSpace(untilDate)
+	filter := NewEventDateRangeFilter(sinceDate, untilDate, loc)
 
 	filtered := make([]provider.UsageEvent, 0, len(events))
 	for _, e := range events {
-		if EventInDateRange(e, sinceDate, untilDate, loc) {
+		if filter.Contains(e) {
 			filtered = append(filtered, e)
 		}
 	}
 	return filtered
 }
 
-// EventInDateRange reports whether an event's localized date key falls within [sinceDate, untilDate].
-// Empty sinceDate or untilDate means no bound on that side.
-func EventInDateRange(e provider.UsageEvent, sinceDate, untilDate string, loc *time.Location) bool {
-	loc = normalizeEventLocation(loc)
-	sinceDate = strings.TrimSpace(sinceDate)
-	untilDate = strings.TrimSpace(untilDate)
+// EventDateRangeFilter checks localized event date keys against inclusive bounds.
+type EventDateRangeFilter struct {
+	sinceDate string
+	untilDate string
+	loc       *time.Location
+}
+
+// NewEventDateRangeFilter creates a reusable localized event date filter.
+func NewEventDateRangeFilter(sinceDate, untilDate string, loc *time.Location) EventDateRangeFilter {
+	return EventDateRangeFilter{
+		sinceDate: strings.TrimSpace(sinceDate),
+		untilDate: strings.TrimSpace(untilDate),
+		loc:       normalizeEventLocation(loc),
+	}
+}
+
+// Contains reports whether an event's localized date key falls within the filter bounds.
+func (f EventDateRangeFilter) Contains(e provider.UsageEvent) bool {
+	loc := normalizeEventLocation(f.loc)
 	date := e.Timestamp.In(loc).Format("2006-01-02")
-	if sinceDate != "" && date < sinceDate {
+	if f.sinceDate != "" && date < f.sinceDate {
 		return false
 	}
-	if untilDate != "" && date > untilDate {
+	if f.untilDate != "" && date > f.untilDate {
 		return false
 	}
 	return true
+}
+
+// EventInDateRange reports whether an event's localized date key falls within [sinceDate, untilDate].
+// Empty sinceDate or untilDate means no bound on that side.
+func EventInDateRange(e provider.UsageEvent, sinceDate, untilDate string, loc *time.Location) bool {
+	return NewEventDateRangeFilter(sinceDate, untilDate, loc).Contains(e)
 }
 
 func normalizeEventLocation(loc *time.Location) *time.Location {
