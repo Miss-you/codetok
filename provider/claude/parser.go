@@ -87,22 +87,24 @@ func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCo
 	}
 
 	paths = filterClaudeUsageEventPaths(paths, opts)
-
-	var events []provider.UsageEvent
-	for _, path := range paths {
-		if opts.Metrics != nil {
-			opts.Metrics.ParsedFiles++
-		}
-		parsed, err := parseUsageEvents(path, pathToSlug[path])
-		if err != nil {
-			continue
-		}
-		events = append(events, parsed...)
-		if opts.Metrics != nil {
-			opts.Metrics.EmittedEvents += len(parsed)
-		}
+	if opts.Metrics != nil {
+		opts.Metrics.ParsedFiles += len(paths)
+	}
+	events := collectUsageEventsWithParser(paths, pathToSlug, 0, parseUsageEvents)
+	if opts.Metrics != nil {
+		opts.Metrics.EmittedEvents += len(events)
 	}
 	return events, nil
+}
+
+type claudeUsageEventParser func(path, projectSlug string) ([]provider.UsageEvent, error)
+
+func collectUsageEventsWithParser(paths []string, pathToSlug map[string]string, maxWorkers int, parseFn claudeUsageEventParser) []provider.UsageEvent {
+	events := provider.ParseUsageEventsParallel(paths, maxWorkers, func(path string) ([]provider.UsageEvent, error) {
+		return parseFn(path, pathToSlug[path])
+	})
+	sortUsageEvents(events)
+	return events
 }
 
 func filterClaudeUsageEventPaths(paths []string, opts provider.UsageEventCollectOptions) []string {
@@ -443,6 +445,11 @@ func parseUsageEvents(path, projectSlug string) ([]provider.UsageEvent, error) {
 		events = append(events, event)
 	}
 
+	sortUsageEvents(events)
+	return events, nil
+}
+
+func sortUsageEvents(events []provider.UsageEvent) {
 	sort.Slice(events, func(i, j int) bool {
 		if !events[i].Timestamp.Equal(events[j].Timestamp) {
 			return events[i].Timestamp.Before(events[j].Timestamp)
@@ -452,8 +459,6 @@ func parseUsageEvents(path, projectSlug string) ([]provider.UsageEvent, error) {
 		}
 		return events[i].EventID < events[j].EventID
 	})
-
-	return events, nil
 }
 
 func tokenUsageFromClaudeUsage(usage *claudeUsage) provider.TokenUsage {
