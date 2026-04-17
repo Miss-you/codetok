@@ -24,7 +24,11 @@ var sessionCmd = &cobra.Command{
 	Short: "Show per-session token usage",
 	Long: `Show per-session token usage.
 
+Session date filters match usage events in the selected date range, then group matching events by session. --timezone accepts an IANA timezone name; when omitted, codetok uses the local timezone.
+
 Reporting commands read only local session files and Cursor CSV exports already on disk. They never trigger implicit Cursor login or sync.
+
+Codex reads $CODEX_HOME/sessions when CODEX_HOME is set, otherwise ~/.codex/sessions.
 
 By default Cursor reporting scans legacy CSV files in ~/.codetok/cursor/ plus imports/ and synced/ subdirectories. Use --cursor-dir to scan only a custom local directory.`,
 	RunE: runSession,

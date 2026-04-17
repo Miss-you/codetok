@@ -6,13 +6,13 @@
 
 [中文文档](README_zh.md)
 
-A CLI tool for tracking and aggregating token usage across AI coding CLI tools.
+A CLI tool for tracking and aggregating local token usage events across AI coding CLI tools.
 
 Supported providers:
 
 - **Kimi CLI** — parses `~/.kimi/sessions/**/wire.jsonl`
 - **Claude Code** — parses `~/.claude/projects/**/*.jsonl` (with streaming deduplication)
-- **Codex CLI** — parses `~/.codex/sessions/**/*.jsonl`
+- **Codex CLI** — parses `$CODEX_HOME/sessions/**/*.jsonl` when `CODEX_HOME` is set, otherwise `~/.codex/sessions/**/*.jsonl`
 - **Cursor** — parses local Cursor usage export CSVs from `~/.codetok/cursor/*.csv`, `~/.codetok/cursor/imports/**/*.csv`, and `~/.codetok/cursor/synced/**/*.csv`
 
 Planned:
@@ -80,6 +80,9 @@ codetok daily --unit m
 # Filter by date range
 codetok daily --since 2026-02-01 --until 2026-02-15
 
+# Interpret date filters and daily buckets in a specific timezone
+codetok daily --since 2026-02-01 --until 2026-02-15 --timezone Asia/Shanghai
+
 # Filter by provider
 codetok daily --provider claude
 codetok session --provider kimi
@@ -140,11 +143,14 @@ That command should print the default dashboard sections: `Daily Total Trend`, `
 Show daily token usage dashboard.
 By default, it shows the last 7 days, grouped by CLI/provider (`--group-by cli`).
 Use `--group-by model` to switch to model aggregation.
+`daily` groups token usage by each usage event's timestamp, so one long-running session can contribute to multiple calendar days.
 Use `--all` for full history, or use `--since`/`--until` for an explicit date range.
+Date filters and daily buckets use your local timezone by default; pass `--timezone IANA/Name` to use another timezone.
 Dashboard output displays token columns in `m` by default (`--unit m`).
 Use `--unit raw`/`k`/`m`/`g` to control display scale.
 JSON output always keeps raw integer token counts.
 In JSON output, `provider` always keeps provider meaning; grouped dimension and value are described by `group_by` + `group`.
+`Sessions` is the number of distinct sessions that contributed usage events to that date/group.
 Use `--top N` to control how many groups appear in the share section for the current grouping dimension.
 Cursor usage is still local-only in this command: by default `codetok` scans legacy root CSVs plus `imports/` and `synced/` under `~/.codetok/cursor/`. It does not trigger implicit sync.
 
@@ -154,15 +160,15 @@ Date   02-15   02-16   02-17   ...
 Total  20.32m  8.47m   66.43m  ...
 Bar    ###...  #.....  ######  ...
 
-Model/CLI Total Ranking
-Rank  Model/CLI        Sessions  Total(m)
-1     claude-opus-4-6  23        102.12m
-2     gpt-5.3-codex    31        100.83m
-3     kimi-for-coding  41        26.78m
+CLI Total Ranking
+Rank  CLI     Sessions  Total(m)
+1     claude  23        102.12m
+2     codex   31        100.83m
+3     kimi    41        26.78m
 
-Top 5 Model/CLI Share
-Rank  Model/CLI        Share   Sessions  Total(m)  Input(m)  Output(m)  Cache Read(m)  Cache Create(m)
-1     claude-opus-4-6  43.81%  23        102.12m   0.02m     0.50m      98.21m         3.39m
+Top 5 CLI Share
+Rank  CLI     Share   Sessions  Total(m)  Input(m)  Output(m)  Cache Read(m)  Cache Create(m)
+1     claude  43.81%  23        102.12m   0.02m     0.50m      98.21m         3.39m
 ```
 
 Flags:
@@ -177,6 +183,7 @@ Flags:
 | `--top` | Number of groups shown in the share section for the current grouping dimension (default: `5`) |
 | `--since` | Start date filter (format: `2006-01-02`) |
 | `--until` | End date filter (format: `2006-01-02`) |
+| `--timezone` | Timezone for date filters and daily buckets; accepts an IANA name and defaults to local time |
 | `--provider` | Filter by provider name (e.g. `kimi`, `claude`, `codex`) |
 | `--base-dir` | Override default data directory (applies to all providers) |
 | `--kimi-dir` | Override Kimi CLI data directory |
@@ -191,10 +198,13 @@ Common combinations:
 - `codetok daily --all --unit g` — full history, displayed in billions
 - `codetok daily --group-by model` — switch to model aggregation (explicit opt-in)
 - `codetok daily --top 10` — show Top 10 groups in share section
+- `codetok daily --timezone Asia/Shanghai` — group and filter event dates in Asia/Shanghai
 
 ### `codetok session`
 
 Show per-session token usage.
+`session` applies `--since`/`--until` to usage event dates before grouping events back into sessions, so a session can appear when it has in-range usage even if it started earlier.
+The displayed `Date` is the first included usage event date for that session in the selected timezone.
 Cursor usage is still local-only in this command: by default `codetok` scans legacy root CSVs plus `imports/` and `synced/` under `~/.codetok/cursor/`. It does not trigger implicit sync.
 
 ```
@@ -204,7 +214,8 @@ Date        Provider  Session                               Title               
 TOTAL                                                                                  2965044   369854  27973571
 ```
 
-Flags: `--json`, `--since`, `--until`, `--provider`, `--base-dir`, `--kimi-dir`, `--claude-dir`, `--codex-dir`, `--cursor-dir`.
+Flags: `--json`, `--since`, `--until`, `--timezone`, `--provider`, `--base-dir`, `--kimi-dir`, `--claude-dir`, `--codex-dir`, `--cursor-dir`.
+`--timezone` accepts an IANA timezone name and defaults to local time.
 When `--cursor-dir` is set, only that local directory is scanned.
 
 ### `codetok version`
@@ -221,10 +232,12 @@ Flags: `--json`, `--db-path`.
 
 ## How It Works
 
-codetok reads local session data and usage exports stored on disk. Each provider has its own parser that understands the tool's data format. JSONL session files are parsed in parallel using bounded goroutines (default: `min(NumCPU, 8)`, configurable via `CODETOK_WORKERS` env var); Cursor CSV files are discovered from local directories and parsed one file at a time.
+codetok reads local session data and usage exports stored on disk. Providers translate those records into timestamped usage events before command-level aggregation. JSONL session files are parsed in parallel using bounded goroutines (default: `min(NumCPU, 8)`, configurable via `CODETOK_WORKERS` env var); Cursor CSV files are discovered from local directories and parsed one file at a time.
 
 Statistics scope:
-- Token usage is computed by aggregating token counters from existing local session logs.
+- Token usage is computed by aggregating token events from existing local session logs and local CSV exports.
+- `daily` groups by usage event date in the selected timezone.
+- `session` filters by usage event date, then groups included events by provider/session.
 - `daily` and `session` do not call provider APIs.
 - `codetok cursor login`, `status`, and `sync` are the explicit Cursor commands that may contact the remote Cursor API.
 - Sessions are counted only if their local log files currently exist.
@@ -236,9 +249,10 @@ Statistics scope:
 - Parses `assistant` events with `message.usage`
 - Deduplicates streaming events using `messageId:requestId` composite key (last-entry-wins)
 
-**Codex CLI** — `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`
+**Codex CLI** — `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`, or `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` when `CODEX_HOME` is unset
 - Parses `event_msg` events with `payload.type="token_count"`
-- Takes the last (cumulative) token count per session
+- Prefers `last_token_usage` when available
+- Converts cumulative `total_token_usage` records into per-event deltas
 
 **Cursor** — `~/.codetok/cursor/*.csv`, `~/.codetok/cursor/imports/**/*.csv`, `~/.codetok/cursor/synced/**/*.csv`
 - Parses local Cursor dashboard usage export CSV rows from disk
@@ -271,7 +285,8 @@ codetok/
 │   └── codex/
 │       └── parser.go       # Codex CLI JSONL parser
 ├── stats/
-│   └── aggregator.go       # Daily aggregation and date filtering
+│   ├── aggregator.go       # Legacy session aggregation helpers
+│   └── events.go           # Event-based daily aggregation and date filtering
 ├── e2e/                    # End-to-end tests
 ├── Makefile                # Build, test, lint targets
 └── .github/workflows/      # CI and release workflows
