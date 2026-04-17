@@ -123,7 +123,8 @@ Cursor 命令边界：
 表格默认按 `m` 单位展示 token 列（`--unit m`）。
 可通过 `--unit raw`/`k`/`m`/`g` 控制展示单位。
 JSON 输出始终保留原始整数 token 值。
-JSON 输出中，`provider` 始终表示 Provider 身份；当前聚合维度和值由 `group_by` 与 `group` 描述。
+JSON 输出中，当前聚合维度和值由 `group_by` 与 `group` 描述。
+`provider` 仅在该统计组可唯一对应到单个 Provider 时有值；当非 Provider 聚合维度横跨多个 Provider 时，`provider` 可能为空，`providers` 会列出贡献的 Provider。
 `Sessions` 表示当天/该分组中贡献 usage events 的不同会话数。
 可用 `--top N` 控制 share 区域展示多少个分组。
 Cursor 在这个命令里仍然是本地读取：默认会扫描 `~/.codetok/cursor/` 下的根目录历史 CSV，以及 `imports/`、`synced/` 子目录；不会隐式触发 sync。

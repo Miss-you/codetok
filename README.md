@@ -149,7 +149,8 @@ Date filters and daily buckets use your local timezone by default; pass `--timez
 Dashboard output displays token columns in `m` by default (`--unit m`).
 Use `--unit raw`/`k`/`m`/`g` to control display scale.
 JSON output always keeps raw integer token counts.
-In JSON output, `provider` always keeps provider meaning; grouped dimension and value are described by `group_by` + `group`.
+In JSON output, grouped dimension and value are described by `group_by` + `group`.
+The `provider` field is populated when a row corresponds to a single provider; for non-provider groupings that span multiple providers, `provider` may be empty and `providers` lists the contributing provider names.
 `Sessions` is the number of distinct sessions that contributed usage events to that date/group.
 Use `--top N` to control how many groups appear in the share section for the current grouping dimension.
 Cursor usage is still local-only in this command: by default `codetok` scans legacy root CSVs plus `imports/` and `synced/` under `~/.codetok/cursor/`. It does not trigger implicit sync.
