@@ -706,6 +706,29 @@ func TestParseCodexUsageEvents_UsesModelFromNonUsageEventMessage(t *testing.T) {
 	}
 }
 
+func TestParseCodexUsageEvents_UsesTopLevelEventMsgModelName(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-event-msg-model-name.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"event-msg-model-name","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:00:30Z","type":"event_msg","payload":{"type":"agent_reasoning","model":"default","model_name":"gpt-5-codex"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1: %#v", len(events), events)
+	}
+	if events[0].ModelName != "gpt-5-codex" {
+		t.Errorf("ModelName = %q, want gpt-5-codex", events[0].ModelName)
+	}
+}
+
 func TestParseCodexUsageEvents_UsesModelFromSkippedTokenCount(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "rollout-skipped-token-count-model.jsonl")
@@ -938,7 +961,9 @@ func TestExtractModelFromRawJSON_ModelPathParity(t *testing.T) {
 		{name: "payload_model_id", raw: `{"payload":{"model_id":"gpt-5-codex"}}`, want: "gpt-5-codex"},
 		{name: "payload_modelId", raw: `{"payload":{"modelId":"gpt-5-codex"}}`, want: "gpt-5-codex"},
 		{name: "escaped_model_name_key", raw: `{"model\u005fname":"gpt-5-codex"}`, want: "gpt-5-codex"},
+		{name: "json_escaped_model_value", raw: `{"model":"openai\/gpt-4.1"}`, want: "openai/gpt-4.1"},
 		{name: "placeholder_falls_through", raw: `{"model":"default","context":{"model_name":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "ignores_model_beyond_supported_nesting", raw: `{"context":{"context":{"model_name":"gpt-5-codex"}}}`, want: ""},
 	}
 
 	for _, tt := range tests {

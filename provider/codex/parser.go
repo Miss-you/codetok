@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -44,7 +43,7 @@ type sessionMetaPayload struct {
 
 // eventMsgPayload holds the event_msg payload envelope.
 type eventMsgPayload struct {
-	codexDirectModelFields
+	codexNamedModelFields
 
 	Type    string          `json:"type"`
 	Model   string          `json:"model"`
@@ -55,7 +54,11 @@ type eventMsgPayload struct {
 }
 
 type codexDirectModelFields struct {
-	ModelDirect   string `json:"model"`
+	ModelDirect string `json:"model"`
+	codexNamedModelFields
+}
+
+type codexNamedModelFields struct {
 	ModelName     string `json:"model_name"`
 	ModelNameJSON string `json:"modelName"`
 	ModelID       string `json:"model_id"`
@@ -619,6 +622,12 @@ func firstCodexModel(candidates ...string) string {
 func (f codexDirectModelFields) firstModel() string {
 	return firstCodexModel(
 		f.ModelDirect,
+		f.codexNamedModelFields.firstModel(),
+	)
+}
+
+func (f codexNamedModelFields) firstModel() string {
+	return firstCodexModel(
 		f.ModelName,
 		f.ModelNameJSON,
 		f.ModelID,
@@ -649,11 +658,13 @@ func (m eventMsgPayload) firstModel(infoModel string) string {
 
 func (m eventMsgPayload) payloadModelWithoutInfo() string {
 	return firstCodexModel(
-		m.codexDirectModelFields.firstModel(),
+		m.codexNamedModelFields.firstModel(),
 		extractModelFromRawJSON(m.Context),
 		extractModelFromRawJSON(m.Payload),
 	)
 }
+
+const maxCodexModelExtractionDepth = 1
 
 func extractModelFromRawJSON(raw json.RawMessage) string {
 	raw = bytes.TrimSpace(raw)
@@ -661,11 +672,11 @@ func extractModelFromRawJSON(raw json.RawMessage) string {
 		return ""
 	}
 
-	model, _ := extractModelFromObject(raw)
+	model, _ := extractModelFromObject(raw, 0)
 	return model
 }
 
-func extractModelFromObject(raw []byte) (string, bool) {
+func extractModelFromObject(raw []byte, depth int) (string, bool) {
 	var direct codexDirectModelFields
 	var nested codexNestedModelRaw
 
@@ -703,6 +714,9 @@ func extractModelFromObject(raw []byte) (string, bool) {
 	if model := direct.firstModel(); model != "" {
 		return model, true
 	}
+	if depth >= maxCodexModelExtractionDepth {
+		return "", true
+	}
 	for _, candidate := range []struct {
 		raw []byte
 		set bool
@@ -714,7 +728,7 @@ func extractModelFromObject(raw []byte) (string, bool) {
 		if !candidate.set {
 			continue
 		}
-		model, ok := extractModelFromObject(bytes.TrimSpace(candidate.raw))
+		model, ok := extractModelFromObject(bytes.TrimSpace(candidate.raw), depth+1)
 		if ok && model != "" {
 			return model, true
 		}
@@ -735,8 +749,12 @@ func handleEscapedCodexModelKey(key, value []byte, direct *codexDirectModelField
 	if !bytes.Contains(key, []byte("\\")) {
 		return false
 	}
-	name, err := strconv.Unquote(`"` + string(key) + `"`)
-	if err != nil {
+	keyJSON := make([]byte, 0, len(key)+2)
+	keyJSON = append(keyJSON, '"')
+	keyJSON = append(keyJSON, key...)
+	keyJSON = append(keyJSON, '"')
+	name, ok := unquoteJSONString(keyJSON)
+	if !ok {
 		return true
 	}
 	switch name {
@@ -821,8 +839,8 @@ func modelStringFromJSONValue(value []byte) string {
 	rawString := value[:end+1]
 	var model string
 	if bytes.Contains(rawString, []byte("\\")) {
-		unquoted, err := strconv.Unquote(string(rawString))
-		if err != nil {
+		unquoted, ok := unquoteJSONString(rawString)
+		if !ok {
 			return ""
 		}
 		model = unquoted
@@ -830,6 +848,14 @@ func modelStringFromJSONValue(value []byte) string {
 		model = string(value[1:end])
 	}
 	return firstCodexModel(model)
+}
+
+func unquoteJSONString(raw []byte) (string, bool) {
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false
+	}
+	return value, true
 }
 
 func scanJSONValue(raw []byte, start int) (int, bool) {
