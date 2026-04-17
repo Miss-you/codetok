@@ -175,6 +175,26 @@ func TestAggregateEventsByDayWithDimension_ModelAcrossProviders(t *testing.T) {
 	}
 }
 
+func TestDailyEventAggregator_MatchesMaterializedAggregation(t *testing.T) {
+	loc := time.FixedZone("UTC+8", 8*3600)
+	events := []provider.UsageEvent{
+		makeUsageEvent("s1", "codex", "shared-model", time.Date(2026, 4, 16, 1, 0, 0, 0, loc), 100, 10),
+		makeUsageEvent("s2", "claude", "shared-model", time.Date(2026, 4, 16, 2, 0, 0, 0, loc), 200, 20),
+		makeUsageEvent("s2", "claude", "shared-model", time.Date(2026, 4, 17, 0, 30, 0, 0, loc), 300, 30),
+	}
+
+	aggregator := NewDailyEventAggregator(AggregateDimensionModel, loc)
+	for _, event := range events {
+		aggregator.Add(event)
+	}
+
+	got := aggregator.Results()
+	want := AggregateEventsByDayWithDimension(events, AggregateDimensionModel, loc)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("streamed aggregation = %#v, want materialized aggregation %#v", got, want)
+	}
+}
+
 func TestFilterEventsByDateRange_UsesLocalizedInclusiveDateKeys(t *testing.T) {
 	utc := time.UTC
 	shanghai := time.FixedZone("UTC+8", 8*3600)

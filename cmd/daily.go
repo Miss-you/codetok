@@ -104,18 +104,16 @@ func runDailyWithProviders(cmd *cobra.Command, args []string, providers []provid
 		return err
 	}
 
-	allEvents, err := collectUsageEventsFromProvidersInRange(cmd, providers, provider.UsageEventCollectOptions{
+	collectOpts := provider.UsageEventCollectOptions{
 		Since:    since,
 		Until:    until,
 		Location: loc,
-	})
+	}
+	sinceDate, untilDate := dailyEventFilterDates(since, until, loc)
+	daily, err := aggregateDailyUsageEventsFromProvidersInRange(cmd, providers, collectOpts, groupBy, loc, sinceDate, untilDate)
 	if err != nil {
 		return err
 	}
-
-	sinceDate, untilDate := dailyEventFilterDates(since, until, loc)
-	allEvents = stats.FilterEventsByDateRange(allEvents, sinceDate, untilDate, loc)
-	daily := stats.AggregateEventsByDayWithDimension(allEvents, groupBy, loc)
 
 	if jsonOutput {
 		if daily == nil {
@@ -133,6 +131,27 @@ func runDailyWithProviders(cmd *cobra.Command, args []string, providers []provid
 
 	printDailyDashboard(daily, unit, groupBy, topN)
 	return nil
+}
+
+func aggregateDailyUsageEventsFromProvidersInRange(
+	cmd *cobra.Command,
+	providers []provider.Provider,
+	opts provider.UsageEventCollectOptions,
+	groupBy stats.AggregateDimension,
+	loc *time.Location,
+	sinceDate, untilDate string,
+) ([]provider.DailyStats, error) {
+	aggregator := stats.NewDailyEventAggregator(groupBy, loc)
+	err := forEachUsageEventFromProvidersInRange(cmd, providers, opts, func(event provider.UsageEvent) error {
+		if stats.EventInDateRange(event, sinceDate, untilDate, loc) {
+			aggregator.Add(event)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return aggregator.Results(), nil
 }
 
 func dailyEventFilterDates(since, until time.Time, loc *time.Location) (string, string) {
