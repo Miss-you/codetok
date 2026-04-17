@@ -325,6 +325,39 @@ make build
 
 Manual CLI checks must run after `make build`; do not use `go run . ...` as acceptance evidence for the built binary.
 
+## Final Acceptance Evidence
+
+EAP-007 final acceptance was run in `.worktrees/eap-007-final-acceptance` on 2026-04-17 after rebasing onto `origin/main` with EAP-004 and EAP-006. The detailed evidence is recorded in `workspace/EAP-007/verification.md`.
+
+Fresh verification completed:
+
+- focused command, provider, stats, and cross-day e2e checks passed
+- synthetic Claude, Codex, and materialized-vs-streaming daily benchmarks passed
+- provider metric assertions cover considered, skipped, parsed, and emitted counts on synthetic fixtures
+- `go clean -testcache` followed by `make test` passed without cached package results
+- `make fmt`, `make vet`, `make lint`, and `make build` passed
+- built-binary smoke checks passed for `daily`, `daily --json`, `daily --all --json`, `daily --provider claude --json`, `session --json`, and `session --since 2026-04-15 --until 2026-04-16 --json`
+
+Current local timing on the same local data family:
+
+| Command | Result |
+| --- | ---: |
+| `./bin/codetok daily` run 1 | 0.48s real |
+| `./bin/codetok daily` run 2 | 0.51s real |
+| `./bin/codetok daily` run 3 | 0.53s real |
+| `./bin/codetok daily --json` | 0.49s real |
+| `./bin/codetok daily --all --json` | 2.29s real |
+| `./bin/codetok daily --provider claude --json` | 0.05s real |
+| `./bin/codetok session --json` | 2.28s real |
+| `./bin/codetok session --since 2026-04-15 --until 2026-04-16 --json` | 0.24s real |
+
+The default `daily` median is 0.51s, compared with the recorded 5.07s/5.26s baseline from the original investigation. That is about 90% faster on this machine and dataset.
+
+Conditional task decision:
+
+- EAP-004 is included in this final acceptance pass and remains done after rebase; its workspace evidence records the streaming daily path, and the refreshed materialized-vs-streaming benchmark confirms the command-level event-slice allocation reduction.
+- EAP-006 is included in this final acceptance pass and remains done after rebase. EAP-004 already removed the materialized daily filter/aggregate pass, so EAP-006 required no additional code and no EAP optimization tasks remain open.
+
 ## Problems Encountered
 
 - The first invalid provider timing attempt passed `daily --provider codex` as one shell argument. Future timing scripts must pass command arguments explicitly.
