@@ -1,12 +1,16 @@
 package claude
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/miss-you/codetok/provider"
 )
 
 func TestParseClaudeSession_ValidData(t *testing.T) {
@@ -436,6 +440,86 @@ func TestCollectClaudeUsageEvents_IncludesSubagentPaths(t *testing.T) {
 	}
 	if !byPath[subagentPath] {
 		t.Errorf("missing subagent event source %q in %#v", subagentPath, events)
+	}
+}
+
+func TestCollectClaudeUsageEventsWithParser_ParsesInParallelAndSorts(t *testing.T) {
+	paths := []string{"file-c.jsonl", "file-a.jsonl", "bad.jsonl", "file-b.jsonl"}
+	pathToSlug := map[string]string{
+		"file-a.jsonl": "project-a",
+		"file-b.jsonl": "project-b",
+		"file-c.jsonl": "project-c",
+		"bad.jsonl":    "project-bad",
+	}
+
+	var active int64
+	var maxActive int64
+	started := make(chan string, len(paths))
+	release := make(chan struct{})
+	parser := func(path, projectSlug string) ([]provider.UsageEvent, error) {
+		current := atomic.AddInt64(&active, 1)
+		for {
+			observed := atomic.LoadInt64(&maxActive)
+			if current <= observed || atomic.CompareAndSwapInt64(&maxActive, observed, current) {
+				break
+			}
+		}
+		defer atomic.AddInt64(&active, -1)
+
+		started <- path
+		<-release
+		if path == "bad.jsonl" {
+			return nil, errors.New("skip this file")
+		}
+		return []provider.UsageEvent{{
+			ProviderName: "claude",
+			WorkDirHash:  projectSlug,
+			SourcePath:   path,
+			Timestamp:    time.Date(2026, 4, 16, len(path), 0, 0, 0, time.UTC),
+			EventID:      path + ":event",
+		}}, nil
+	}
+
+	resultCh := make(chan []provider.UsageEvent, 1)
+	go func() {
+		resultCh <- collectUsageEventsWithParser(paths, pathToSlug, 2, parser)
+	}()
+
+	startedPaths := make(map[string]bool)
+	for len(startedPaths) < 2 {
+		select {
+		case path := <-started:
+			startedPaths[path] = true
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatalf("timed out waiting for two concurrent parser starts; saw %v", startedPaths)
+		}
+	}
+	close(release)
+
+	var events []provider.UsageEvent
+	select {
+	case events = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for parallel collection to finish")
+	}
+	if got := atomic.LoadInt64(&maxActive); got < 2 {
+		t.Fatalf("max concurrent parses = %d, want bounded parallel parsing with at least 2 active workers", got)
+	} else if got > 2 {
+		t.Fatalf("max concurrent parses = %d, want worker limit 2", got)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3 successful parses", len(events))
+	}
+	wantPaths := []string{"file-a.jsonl", "file-b.jsonl", "file-c.jsonl"}
+	for i, want := range wantPaths {
+		if events[i].SourcePath != want {
+			t.Fatalf("event[%d].SourcePath = %q, want deterministic source order %q in %#v", i, events[i].SourcePath, want, events)
+		}
+	}
+	if events[0].WorkDirHash != "project-a" || events[1].WorkDirHash != "project-b" || events[2].WorkDirHash != "project-c" {
+		t.Fatalf("events did not receive project slugs from path map: %#v", events)
 	}
 }
 
