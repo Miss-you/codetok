@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/miss-you/codetok/stats"
 )
 
 func TestParseCodexSession_ValidData(t *testing.T) {
@@ -704,6 +706,66 @@ func TestCollectCodexUsageEvents_ExplicitBaseDirOverridesCodexHome(t *testing.T)
 	}
 	if events[0].SessionID != "explicit-session" {
 		t.Errorf("SessionID = %q, want explicit-session", events[0].SessionID)
+	}
+}
+
+func TestCollectCodexUsageEvents_CrossDayDatedLayoutIgnoresFileModTimeForAttribution(t *testing.T) {
+	baseDir := t.TempDir()
+	dir := filepath.Join(baseDir, "2026", "04", "15")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "rollout-2026-04-15T23-50-00-cross-day.jsonl")
+	content := `{"timestamp":"2026-04-15T23:50:00Z","type":"session_meta","payload":{"id":"cross-day-mtime","timestamp":"2026-04-15T23:50:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T23:51:00Z","type":"turn_context","payload":{"model":"gpt-5.4"}}
+{"timestamp":"2026-04-15T23:55:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":300,"total_tokens":1300}}}}
+{"timestamp":"2026-04-16T00:10:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1500,"cached_input_tokens":250,"output_tokens":450,"total_tokens":1950}}}}
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldModTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, oldModTime, oldModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := (&Provider{}).CollectUsageEvents(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2: %#v", len(events), events)
+	}
+	if !events[0].Timestamp.Equal(time.Date(2026, 4, 15, 23, 55, 0, 0, time.UTC)) {
+		t.Errorf("first Timestamp = %s, want 2026-04-15T23:55:00Z", events[0].Timestamp.Format(time.RFC3339))
+	}
+	if !events[1].Timestamp.Equal(time.Date(2026, 4, 16, 0, 10, 0, 0, time.UTC)) {
+		t.Errorf("second Timestamp = %s, want 2026-04-16T00:10:00Z", events[1].Timestamp.Format(time.RFC3339))
+	}
+	if events[0].TokenUsage.InputOther != 800 || events[0].TokenUsage.InputCacheRead != 200 || events[0].TokenUsage.Output != 300 {
+		t.Errorf("first usage = %+v, want input_other=800 input_cache_read=200 output=300", events[0].TokenUsage)
+	}
+	if events[1].TokenUsage.InputOther != 450 || events[1].TokenUsage.InputCacheRead != 50 || events[1].TokenUsage.Output != 150 {
+		t.Errorf("second usage = %+v, want input_other=450 input_cache_read=50 output=150", events[1].TokenUsage)
+	}
+	for _, event := range events {
+		if event.SessionID != "cross-day-mtime" {
+			t.Errorf("SessionID = %q, want cross-day-mtime", event.SessionID)
+		}
+		if event.SourcePath != path {
+			t.Errorf("SourcePath = %q, want %q", event.SourcePath, path)
+		}
+	}
+
+	filtered := stats.FilterEventsByDateRange(events, "2026-04-16", "2026-04-16", time.UTC)
+	if len(filtered) != 1 {
+		t.Fatalf("filtered got %d events, want only the in-window event: %#v", len(filtered), filtered)
+	}
+	if !filtered[0].Timestamp.Equal(time.Date(2026, 4, 16, 0, 10, 0, 0, time.UTC)) {
+		t.Errorf("filtered Timestamp = %s, want 2026-04-16T00:10:00Z", filtered[0].Timestamp.Format(time.RFC3339))
+	}
+	if filtered[0].TokenUsage.InputOther != 450 || filtered[0].TokenUsage.InputCacheRead != 50 || filtered[0].TokenUsage.Output != 150 {
+		t.Errorf("filtered usage = %+v, want second event delta only", filtered[0].TokenUsage)
 	}
 }
 
