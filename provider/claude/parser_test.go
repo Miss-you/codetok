@@ -1,8 +1,10 @@
 package claude
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -435,6 +437,71 @@ func TestCollectClaudeUsageEvents_IncludesSubagentPaths(t *testing.T) {
 	if !byPath[subagentPath] {
 		t.Errorf("missing subagent event source %q in %#v", subagentPath, events)
 	}
+}
+
+func BenchmarkCollectClaudeUsageEventsSynthetic(b *testing.B) {
+	const (
+		projectCount    = 4
+		filesPerProject = 25
+		eventsPerFile   = 6
+	)
+	baseDir := b.TempDir()
+	totalFiles := writeSyntheticClaudeUsageTree(b, baseDir, projectCount, filesPerProject, eventsPerFile)
+	totalEvents := totalFiles * eventsPerFile
+	p := &Provider{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		events, err := p.CollectUsageEvents(baseDir)
+		if err != nil {
+			b.Fatalf("CollectUsageEvents returned error: %v", err)
+		}
+		if len(events) != totalEvents {
+			b.Fatalf("got %d events, want %d", len(events), totalEvents)
+		}
+	}
+	b.ReportMetric(float64(totalFiles), "files/op")
+	b.ReportMetric(float64(totalEvents), "events/op")
+}
+
+func writeSyntheticClaudeUsageTree(tb testing.TB, baseDir string, projectCount, filesPerProject, eventsPerFile int) int {
+	tb.Helper()
+
+	totalFiles := 0
+	for projectIndex := 0; projectIndex < projectCount; projectIndex++ {
+		projectDir := filepath.Join(baseDir, fmt.Sprintf("project-%02d", projectIndex))
+		if err := os.MkdirAll(projectDir, 0755); err != nil {
+			tb.Fatal(err)
+		}
+		for fileIndex := 0; fileIndex < filesPerProject; fileIndex++ {
+			sessionID := fmt.Sprintf("session-%02d-%02d", projectIndex, fileIndex)
+			path := filepath.Join(projectDir, sessionID+".jsonl")
+			var content strings.Builder
+			for eventIndex := 0; eventIndex < eventsPerFile; eventIndex++ {
+				timestamp := time.Date(2026, 4, 10+projectIndex, fileIndex%24, eventIndex, 0, 0, time.UTC).Format(time.RFC3339)
+				fmt.Fprintf(&content, `{"type":"assistant","requestId":"req-%02d-%02d-%02d","sessionId":"%s","timestamp":"%s","message":{"id":"msg-%02d-%02d-%02d","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"synthetic"}],"usage":{"input_tokens":%d,"cache_creation_input_tokens":%d,"cache_read_input_tokens":%d,"output_tokens":%d}}}`+"\n",
+					projectIndex,
+					fileIndex,
+					eventIndex,
+					sessionID,
+					timestamp,
+					projectIndex,
+					fileIndex,
+					eventIndex,
+					100+eventIndex,
+					10,
+					20,
+					30+eventIndex,
+				)
+			}
+			if err := os.WriteFile(path, []byte(content.String()), 0644); err != nil {
+				tb.Fatal(err)
+			}
+			totalFiles++
+		}
+	}
+	return totalFiles
 }
 
 func mustParseTime(t *testing.T, value string) time.Time {
