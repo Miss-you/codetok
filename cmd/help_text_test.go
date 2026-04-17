@@ -19,6 +19,20 @@ func TestDailyHelpMentionsCursorReportsAreLocalOnly(t *testing.T) {
 	}
 }
 
+func TestDailyHelpMentionsEventDateTimezoneAndCodexHome(t *testing.T) {
+	output := renderCommandHelp(t, dailyCmd)
+
+	if !strings.Contains(output, "usage events by event date") {
+		t.Fatalf("daily help missing event-date aggregation guidance:\n%s", output)
+	}
+	if !strings.Contains(output, "IANA timezone name") || !strings.Contains(output, "local timezone") {
+		t.Fatalf("daily help missing timezone guidance:\n%s", output)
+	}
+	if !strings.Contains(output, "$CODEX_HOME/sessions") || !strings.Contains(output, "~/.codex/sessions") {
+		t.Fatalf("daily help missing Codex source resolution guidance:\n%s", output)
+	}
+}
+
 func TestSessionHelpMentionsCursorReportsAreLocalOnly(t *testing.T) {
 	output := renderCommandHelp(t, sessionCmd)
 
@@ -27,6 +41,20 @@ func TestSessionHelpMentionsCursorReportsAreLocalOnly(t *testing.T) {
 	}
 	if !strings.Contains(output, "imports/") || !strings.Contains(output, "synced/") {
 		t.Fatalf("session help missing default Cursor source layout:\n%s", output)
+	}
+}
+
+func TestSessionHelpMentionsEventFilteringTimezoneAndCodexHome(t *testing.T) {
+	output := renderCommandHelp(t, sessionCmd)
+
+	if !strings.Contains(output, "usage events in the selected date range") {
+		t.Fatalf("session help missing usage-event filtering guidance:\n%s", output)
+	}
+	if !strings.Contains(output, "IANA timezone name") || !strings.Contains(output, "local timezone") {
+		t.Fatalf("session help missing timezone guidance:\n%s", output)
+	}
+	if !strings.Contains(output, "$CODEX_HOME/sessions") || !strings.Contains(output, "~/.codex/sessions") {
+		t.Fatalf("session help missing Codex source resolution guidance:\n%s", output)
 	}
 }
 

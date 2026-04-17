@@ -26,7 +26,11 @@ var dailyCmd = &cobra.Command{
 	Short: "Show daily token usage breakdown",
 	Long: `Show daily token usage breakdown.
 
+Daily buckets local usage events by event date in the selected timezone. --timezone accepts an IANA timezone name; when omitted, codetok uses the local timezone.
+
 Reporting commands read only local session files and Cursor CSV exports already on disk. They never trigger implicit Cursor login or sync.
+
+Codex reads $CODEX_HOME/sessions when CODEX_HOME is set, otherwise ~/.codex/sessions.
 
 By default Cursor reporting scans legacy CSV files in ~/.codetok/cursor/ plus imports/ and synced/ subdirectories. Use --cursor-dir to scan only a custom local directory.`,
 	RunE: runDaily,
