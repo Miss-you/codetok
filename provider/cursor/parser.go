@@ -74,6 +74,14 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 // CollectUsageEvents scans Cursor CSV exports and returns one timestamped usage
 // event per valid CSV row.
 func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
+	return p.collectUsageEvents(baseDir, provider.UsageEventCollectOptions{})
+}
+
+func (p *Provider) CollectUsageEventsInRange(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
+	return p.collectUsageEvents(baseDir, opts)
+}
+
+func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
 	paths, err := resolveCursorCSVPaths(baseDir)
 	if err != nil {
 		return nil, err
@@ -81,13 +89,26 @@ func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, er
 
 	var events []provider.UsageEvent
 	for _, path := range paths {
+		if opts.Metrics != nil {
+			opts.Metrics.ConsideredFiles++
+		}
 		parsed, err := parseUsageCSV(path)
 		if err != nil {
 			continue
 		}
-		for _, session := range parsed {
-			events = append(events, sessionUsageEvent(path, session))
+		if opts.Metrics != nil {
+			opts.Metrics.ParsedFiles++
 		}
+		for _, session := range parsed {
+			event := sessionUsageEvent(path, session)
+			if !opts.ContainsTimestamp(event.Timestamp) {
+				continue
+			}
+			events = append(events, event)
+		}
+	}
+	if opts.Metrics != nil {
+		opts.Metrics.EmittedEvents += len(events)
 	}
 
 	sort.Slice(events, func(i, j int) bool {

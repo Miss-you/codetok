@@ -454,6 +454,84 @@ func TestCollectKimiUsageEvents_MetadataModelWinsOverWireModel(t *testing.T) {
 	}
 }
 
+func TestCollectKimiUsageEventsInRange_SkipsInactiveWireFilesByModTime(t *testing.T) {
+	baseDir := t.TempDir()
+	oldWire := writeKimiUsageSession(t, baseDir, "work-a", "old-session", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), 100)
+	activeWire := writeKimiUsageSession(t, baseDir, "work-a", "active-session", time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC), 200)
+	oldModTime := time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC)
+	activeModTime := time.Date(2026, 4, 16, 11, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(oldWire, oldModTime, oldModTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(activeWire, activeModTime, activeModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 || events[0].SessionID != "active-session" {
+		t.Fatalf("events = %#v, want only active-session", events)
+	}
+	if metrics.ConsideredFiles != 2 || metrics.SkippedFiles != 1 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 1 {
+		t.Fatalf("metrics = %+v, want considered=2 skipped=1 parsed=1 emitted=1", metrics)
+	}
+}
+
+func TestCollectKimiUsageEventsInRange_KeepsSessionModifiedAfterUntil(t *testing.T) {
+	baseDir := t.TempDir()
+	wirePath := writeKimiUsageSession(t, baseDir, "work-a", "cross-day-session", time.Date(2026, 4, 16, 23, 30, 0, 0, time.UTC), 300)
+	afterUntil := time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(wirePath, afterUntil, afterUntil); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 || events[0].SessionID != "cross-day-session" {
+		t.Fatalf("events = %#v, want cross-day-session candidate", events)
+	}
+	if metrics.ConsideredFiles != 1 || metrics.SkippedFiles != 0 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 1 {
+		t.Fatalf("metrics = %+v, want considered=1 skipped=0 parsed=1 emitted=1", metrics)
+	}
+}
+
+func writeKimiUsageSession(t *testing.T, baseDir, workDirHash, sessionID string, timestamp time.Time, input int) string {
+	t.Helper()
+	sessionDir := filepath.Join(baseDir, workDirHash, sessionID)
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	metadata := fmt.Sprintf(`{"session_id":"%s","title":"%s","model":"kimi-k2"}`, sessionID, sessionID)
+	if err := os.WriteFile(filepath.Join(sessionDir, "metadata.json"), []byte(metadata), 0644); err != nil {
+		t.Fatal(err)
+	}
+	wirePath := filepath.Join(sessionDir, "wire.jsonl")
+	content := fmt.Sprintf(`{"timestamp":%.0f,"message":{"type":"StatusUpdate","payload":{"model":"kimi-k2","message_id":"msg-%s","token_usage":{"input_other":%d,"output":10,"input_cache_read":0,"input_cache_creation":0}}}}`+"\n",
+		float64(timestamp.Unix()),
+		sessionID,
+		input,
+	)
+	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return wirePath
+}
+
 func TestParseSession_MetadataModelFallback(t *testing.T) {
 	baseDir := t.TempDir()
 	sessionDir := filepath.Join(baseDir, "hashA", "uuid-1")

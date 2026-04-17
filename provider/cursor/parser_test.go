@@ -261,6 +261,64 @@ func TestCollectUsageEvents_DefaultRootAndExplicitDirRules(t *testing.T) {
 	}
 }
 
+func TestCollectUsageEventsInRange_FiltersCSVRowsWithoutUsingFileModTime(t *testing.T) {
+	baseDir := t.TempDir()
+	path := filepath.Join(baseDir, "usage.csv")
+	writeCursorCSVFixture(t, path,
+		`"2026-04-15T23:59:00Z","before","cursor-auto","0","100","0","10"`,
+		`"2026-04-16T12:00:00Z","inside","cursor-auto","0","200","0","20"`,
+		`"2026-04-17T00:00:00Z","after","cursor-auto","0","300","0","30"`,
+	)
+	oldModTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, oldModTime, oldModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want only in-range row: %#v", len(events), events)
+	}
+	if events[0].SessionID != "usage:2" || events[0].TokenUsage.Total() != 220 {
+		t.Fatalf("event = %#v, want usage:2 total 220", events[0])
+	}
+	if metrics.ConsideredFiles != 1 || metrics.SkippedFiles != 0 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 1 {
+		t.Fatalf("metrics = %+v, want considered=1 skipped=0 parsed=1 emitted=1", metrics)
+	}
+}
+
+func TestCollectUsageEventsInRange_ExplicitDirRules(t *testing.T) {
+	defaultRoot := t.TempDir()
+	explicitDir := t.TempDir()
+	t.Setenv("HOME", defaultRoot)
+	writeCursorCSVFixture(t, filepath.Join(defaultRoot, ".codetok", "cursor", "imports", "default.csv"),
+		`"2026-04-16T10:00:00Z","Default","cursor-auto","0","100","0","10"`,
+	)
+	writeCursorCSVFixture(t, filepath.Join(explicitDir, "custom.csv"),
+		`"2026-04-16T11:00:00Z","Custom","cursor-auto","0","200","0","20"`,
+	)
+
+	events, err := (&Provider{}).CollectUsageEventsInRange(explicitDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+		Location: time.UTC,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 || events[0].SessionID != "custom:1" {
+		t.Fatalf("events = %#v, want only explicit custom csv", events)
+	}
+}
+
 func TestParseUsageCSV_SkipsMalformedRows(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cursor.csv")

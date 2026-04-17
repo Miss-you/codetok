@@ -121,6 +121,14 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 
 // CollectUsageEvents scans baseDir for Kimi session directories and returns native usage events.
 func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
+	return p.collectUsageEvents(baseDir, provider.UsageEventCollectOptions{})
+}
+
+func (p *Provider) CollectUsageEventsInRange(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
+	return p.collectUsageEvents(baseDir, opts)
+}
+
+func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
 	if baseDir == "" {
 		baseDir = defaultKimiSessionsDir()
 	}
@@ -157,11 +165,24 @@ func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, er
 				continue
 			}
 
+			if opts.Metrics != nil {
+				opts.Metrics.ConsideredFiles++
+			}
+			if shouldSkipKimiWirePath(wirePath, opts) {
+				if opts.Metrics != nil {
+					opts.Metrics.SkippedFiles++
+				}
+				continue
+			}
+
 			paths = append(paths, sessionPath)
 			pathToHash[sessionPath] = workDirHash
 		}
 	}
 
+	if opts.Metrics != nil {
+		opts.Metrics.ParsedFiles += len(paths)
+	}
 	eventBatches := provider.ParseParallel(paths, 0, func(path string) ([]provider.UsageEvent, error) {
 		return parseSessionUsageEvents(path, pathToHash[path], sessionModelIndex)
 	})
@@ -170,8 +191,22 @@ func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, er
 	for _, batch := range eventBatches {
 		events = append(events, batch...)
 	}
+	if opts.Metrics != nil {
+		opts.Metrics.EmittedEvents += len(events)
+	}
 
 	return events, nil
+}
+
+func shouldSkipKimiWirePath(wirePath string, opts provider.UsageEventCollectOptions) bool {
+	if !opts.HasRange() {
+		return false
+	}
+	info, err := os.Stat(wirePath)
+	if err != nil {
+		return true
+	}
+	return opts.ShouldSkipFileByModTime(info.ModTime())
 }
 
 // parseSession parses a single session directory.

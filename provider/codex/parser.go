@@ -116,12 +116,87 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 }
 
 func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
+	return p.collectUsageEvents(baseDir, provider.UsageEventCollectOptions{})
+}
+
+func (p *Provider) CollectUsageEventsInRange(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
+	return p.collectUsageEvents(baseDir, opts)
+}
+
+func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
 	paths, err := collectCodexSessionPaths(baseDir)
 	if err != nil {
 		return nil, err
 	}
 
-	return provider.ParseUsageEventsParallel(paths, 0, parseCodexUsageEvents), nil
+	paths = filterCodexUsageEventPaths(paths, opts)
+	if opts.Metrics != nil {
+		opts.Metrics.ParsedFiles += len(paths)
+	}
+	events := provider.ParseUsageEventsParallel(paths, 0, parseCodexUsageEvents)
+	if opts.Metrics != nil {
+		opts.Metrics.EmittedEvents += len(events)
+	}
+	return events, nil
+}
+
+func filterCodexUsageEventPaths(paths []string, opts provider.UsageEventCollectOptions) []string {
+	if !opts.HasRange() {
+		if opts.Metrics != nil {
+			opts.Metrics.ConsideredFiles += len(paths)
+		}
+		return paths
+	}
+	filtered := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if opts.Metrics != nil {
+			opts.Metrics.ConsideredFiles++
+		}
+		if codexPathMayOverlapRange(path, opts) {
+			filtered = append(filtered, path)
+			continue
+		}
+		info, err := os.Stat(path)
+		if err == nil && !opts.ShouldSkipFileByModTime(info.ModTime()) {
+			filtered = append(filtered, path)
+			continue
+		}
+		if opts.Metrics != nil {
+			opts.Metrics.SkippedFiles++
+		}
+	}
+	return filtered
+}
+
+func codexPathMayOverlapRange(path string, opts provider.UsageEventCollectOptions) bool {
+	if opts.Since.IsZero() {
+		return true
+	}
+	pathDate, ok := codexPathLocalDate(path, opts.Location)
+	if !ok {
+		return false
+	}
+	loc := opts.Location
+	if loc == nil {
+		loc = time.Local
+	}
+	sinceLocal := opts.Since.In(loc)
+	sinceDate := time.Date(sinceLocal.Year(), sinceLocal.Month(), sinceLocal.Day(), 0, 0, 0, 0, loc)
+	return !pathDate.Before(sinceDate.AddDate(0, 0, -1))
+}
+
+func codexPathLocalDate(path string, loc *time.Location) (time.Time, bool) {
+	if loc == nil {
+		loc = time.Local
+	}
+	day := filepath.Base(filepath.Dir(path))
+	month := filepath.Base(filepath.Dir(filepath.Dir(path)))
+	year := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(path))))
+	parsed, err := time.ParseInLocation("2006-01-02", year+"-"+month+"-"+day, loc)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
 
 func resolveCodexSessionsDir(baseDir string) (string, error) {

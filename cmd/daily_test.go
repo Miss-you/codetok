@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -350,6 +351,209 @@ func TestRunDaily_JSONAggregatesUsageEventsByEventDate(t *testing.T) {
 	}
 	if got[1].Date != "2026-04-16" || got[1].Sessions != 1 || got[1].TokenUsage.Total() != 220 {
 		t.Fatalf("second row mismatch: %#v", got[1])
+	}
+}
+
+func TestRunDaily_DefaultWindowPassesRangeToCollector(t *testing.T) {
+	loc := mustLoadLocation(t, "Asia/Shanghai")
+	eventProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "codex"},
+		eventErr:            errors.New("full-history collector called"),
+		rangeEvents: []provider.UsageEvent{{
+			ProviderName: "codex",
+			SessionID:    "default-window",
+			Timestamp:    time.Date(2026, 4, 10, 1, 0, 0, 0, loc),
+			TokenUsage:   provider.TokenUsage{InputOther: 10},
+		}},
+	}
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("timezone", "Asia/Shanghai"); err != nil {
+		t.Fatalf("setting --timezone: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runDailyWithProviders(cmd, nil, []provider.Provider{eventProvider}, time.Date(2026, 4, 15, 17, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatalf("runDailyWithProviders returned error: %v", err)
+		}
+	})
+	got := decodeDailyJSON(t, output)
+	if len(got) != 1 || got[0].Date != "2026-04-10" {
+		t.Fatalf("daily rows = %#v, want one 2026-04-10 row", got)
+	}
+	if len(eventProvider.seenEventDirs) != 0 {
+		t.Fatalf("full-history collector should not be called, seen %v", eventProvider.seenEventDirs)
+	}
+	if len(eventProvider.seenRangeOpts) != 1 {
+		t.Fatalf("range opts seen %d times, want 1", len(eventProvider.seenRangeOpts))
+	}
+	wantSince := time.Date(2026, 4, 10, 0, 0, 0, 0, loc)
+	gotOpts := eventProvider.seenRangeOpts[0]
+	if !gotOpts.Since.Equal(wantSince) || !gotOpts.Until.IsZero() || gotOpts.Location.String() != "Asia/Shanghai" {
+		t.Fatalf("range opts = %+v, want since=%v zero until Asia/Shanghai", gotOpts, wantSince)
+	}
+}
+
+func TestRunDaily_InvalidDateFlagsAreRejectedBeforeCollection(t *testing.T) {
+	tests := []struct {
+		name      string
+		setFlags  func(*cobra.Command)
+		wantError string
+	}{
+		{
+			name: "--all with --since",
+			setFlags: func(cmd *cobra.Command) {
+				if err := cmd.Flags().Set("all", "true"); err != nil {
+					t.Fatal(err)
+				}
+				if err := cmd.Flags().Set("since", "2026-04-16"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError: "--all cannot be used",
+		},
+		{
+			name: "changed --days with --since",
+			setFlags: func(cmd *cobra.Command) {
+				if err := cmd.Flags().Set("days", "3"); err != nil {
+					t.Fatal(err)
+				}
+				if err := cmd.Flags().Set("since", "2026-04-16"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError: "--days cannot be used",
+		},
+		{
+			name: "invalid --days",
+			setFlags: func(cmd *cobra.Command) {
+				if err := cmd.Flags().Set("days", "0"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantError: "invalid --days",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eventProvider := &collectTestUsageEventProvider{
+				collectTestProvider: collectTestProvider{name: "codex"},
+				eventErr:            errors.New("collector should not be called"),
+				rangeErr:            errors.New("range collector should not be called"),
+			}
+			cmd := newDailyTestCommand()
+			tt.setFlags(cmd)
+
+			err := runDailyWithProviders(cmd, nil, []provider.Provider{eventProvider}, time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC))
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("error = %v, want %q", err, tt.wantError)
+			}
+			if len(eventProvider.seenEventDirs) != 0 || len(eventProvider.seenRangeDirs) != 0 {
+				t.Fatalf("collector should not be called, full=%v range=%v", eventProvider.seenEventDirs, eventProvider.seenRangeDirs)
+			}
+		})
+	}
+}
+
+func TestRunDaily_RangeCandidateEventsAreStillAuthoritativelyFiltered(t *testing.T) {
+	eventProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "codex"},
+		eventErr:            errors.New("full-history collector called"),
+		rangeEvents: []provider.UsageEvent{
+			{
+				ProviderName: "codex",
+				SessionID:    "before",
+				Timestamp:    time.Date(2026, 4, 15, 23, 59, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 100},
+			},
+			{
+				ProviderName: "codex",
+				SessionID:    "inside",
+				Timestamp:    time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 200},
+			},
+			{
+				ProviderName: "codex",
+				SessionID:    "after",
+				Timestamp:    time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 300},
+			},
+		},
+	}
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("since", "2026-04-16"); err != nil {
+		t.Fatalf("setting --since: %v", err)
+	}
+	if err := cmd.Flags().Set("until", "2026-04-16"); err != nil {
+		t.Fatalf("setting --until: %v", err)
+	}
+	if err := cmd.Flags().Set("timezone", "UTC"); err != nil {
+		t.Fatalf("setting --timezone: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runDailyWithProviders(cmd, nil, []provider.Provider{eventProvider}, time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatalf("runDailyWithProviders returned error: %v", err)
+		}
+	})
+
+	got := decodeDailyJSON(t, output)
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want one in-window row: %#v", len(got), got)
+	}
+	if got[0].Date != "2026-04-16" || got[0].TokenUsage.Total() != 200 {
+		t.Fatalf("row = %#v, want only in-window total 200", got[0])
+	}
+}
+
+func TestRunDaily_AllUsesFullHistoryCollection(t *testing.T) {
+	eventProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "codex"},
+		events: []provider.UsageEvent{
+			{
+				ProviderName: "codex",
+				SessionID:    "old",
+				Timestamp:    time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 100},
+			},
+			{
+				ProviderName: "codex",
+				SessionID:    "recent",
+				Timestamp:    time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 200},
+			},
+		},
+		rangeErr: errors.New("range collector should not be called"),
+	}
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("all", "true"); err != nil {
+		t.Fatalf("setting --all: %v", err)
+	}
+	if err := cmd.Flags().Set("timezone", "UTC"); err != nil {
+		t.Fatalf("setting --timezone: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runDailyWithProviders(cmd, nil, []provider.Provider{eventProvider}, time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatalf("runDailyWithProviders returned error: %v", err)
+		}
+	})
+
+	got := decodeDailyJSON(t, output)
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, want full-history rows: %#v", len(got), got)
+	}
+	if len(eventProvider.seenRangeDirs) != 0 {
+		t.Fatalf("range collector should not be called for --all, seen %v", eventProvider.seenRangeDirs)
 	}
 }
 
