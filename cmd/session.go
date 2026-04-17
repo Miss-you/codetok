@@ -73,12 +73,16 @@ func runSessionWithProviders(cmd *cobra.Command, args []string, providers []prov
 		return err
 	}
 
-	sinceDate, untilDate, err := resolveSessionEventFilterDates(sinceStr, untilStr, loc)
+	sinceDate, untilDate, since, until, err := resolveSessionEventFilterRange(sinceStr, untilStr, loc)
 	if err != nil {
 		return err
 	}
 
-	events, err := collectUsageEventsFromProviders(cmd, providers)
+	events, err := collectUsageEventsFromProvidersInRange(cmd, providers, provider.UsageEventCollectOptions{
+		Since:    since,
+		Until:    until,
+		Location: loc,
+	})
 	if err != nil {
 		return err
 	}
@@ -107,26 +111,34 @@ func runSessionWithProviders(cmd *cobra.Command, args []string, providers []prov
 }
 
 func resolveSessionEventFilterDates(sinceStr, untilStr string, loc *time.Location) (string, string, error) {
+	sinceDate, untilDate, _, _, err := resolveSessionEventFilterRange(sinceStr, untilStr, loc)
+	return sinceDate, untilDate, err
+}
+
+func resolveSessionEventFilterRange(sinceStr, untilStr string, loc *time.Location) (string, string, time.Time, time.Time, error) {
 	if loc == nil {
 		loc = time.Local
 	}
 
 	var sinceDate, untilDate string
+	var since, until time.Time
 	if strings.TrimSpace(sinceStr) != "" {
-		since, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(sinceStr), loc)
+		parsed, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(sinceStr), loc)
 		if err != nil {
-			return "", "", fmt.Errorf("invalid --since date: %w", err)
+			return "", "", time.Time{}, time.Time{}, fmt.Errorf("invalid --since date: %w", err)
 		}
-		sinceDate = since.Format("2006-01-02")
+		since = parsed
+		sinceDate = parsed.Format("2006-01-02")
 	}
 	if strings.TrimSpace(untilStr) != "" {
-		until, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(untilStr), loc)
+		parsed, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(untilStr), loc)
 		if err != nil {
-			return "", "", fmt.Errorf("invalid --until date: %w", err)
+			return "", "", time.Time{}, time.Time{}, fmt.Errorf("invalid --until date: %w", err)
 		}
-		untilDate = until.Format("2006-01-02")
+		untilDate = parsed.Format("2006-01-02")
+		until = time.Date(parsed.Year(), parsed.Month(), parsed.Day()+1, 0, 0, 0, 0, loc).Add(-time.Nanosecond)
 	}
-	return sinceDate, untilDate, nil
+	return sinceDate, untilDate, since, until, nil
 }
 
 func aggregateSessionEvents(events []provider.UsageEvent) []provider.SessionInfo {

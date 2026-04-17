@@ -40,6 +40,10 @@ func collectSessionsFromProviders(cmd *cobra.Command, providers []provider.Provi
 }
 
 func collectUsageEventsFromProviders(cmd *cobra.Command, providers []provider.Provider) ([]provider.UsageEvent, error) {
+	return collectUsageEventsFromProvidersInRange(cmd, providers, provider.UsageEventCollectOptions{})
+}
+
+func collectUsageEventsFromProvidersInRange(cmd *cobra.Command, providers []provider.Provider, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
 	providerFilter, _ := cmd.Flags().GetString("provider")
 	baseDir, _ := cmd.Flags().GetString("base-dir")
 
@@ -53,7 +57,7 @@ func collectUsageEventsFromProviders(cmd *cobra.Command, providers []provider.Pr
 		}
 
 		if eventProvider, ok := p.(provider.UsageEventProvider); ok {
-			events, err := eventProvider.CollectUsageEvents(dir)
+			events, err := collectProviderUsageEvents(eventProvider, dir, opts)
 			if err != nil {
 				if os.IsNotExist(err) {
 					continue
@@ -85,4 +89,13 @@ func collectUsageEventsFromProviders(cmd *cobra.Command, providers []provider.Pr
 	}
 
 	return allEvents, nil
+}
+
+func collectProviderUsageEvents(eventProvider provider.UsageEventProvider, dir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
+	if opts.HasRange() {
+		if rangeProvider, ok := eventProvider.(provider.RangeAwareUsageEventProvider); ok {
+			return rangeProvider.CollectUsageEventsInRange(dir, opts)
+		}
+	}
+	return eventProvider.CollectUsageEvents(dir)
 }

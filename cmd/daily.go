@@ -91,11 +91,6 @@ func runDailyWithProviders(cmd *cobra.Command, args []string, providers []provid
 		return err
 	}
 
-	allEvents, err := collectUsageEventsFromProviders(cmd, providers)
-	if err != nil {
-		return err
-	}
-
 	since, until, err := resolveDailyDateRange(
 		sinceStr,
 		untilStr,
@@ -105,6 +100,15 @@ func runDailyWithProviders(cmd *cobra.Command, args []string, providers []provid
 		now,
 		loc,
 	)
+	if err != nil {
+		return err
+	}
+
+	allEvents, err := collectUsageEventsFromProvidersInRange(cmd, providers, provider.UsageEventCollectOptions{
+		Since:    since,
+		Until:    until,
+		Location: loc,
+	})
 	if err != nil {
 		return err
 	}

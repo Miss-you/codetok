@@ -121,6 +121,14 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 
 // CollectUsageEvents scans baseDir for Kimi session directories and returns native usage events.
 func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
+	return p.collectUsageEvents(baseDir, provider.UsageEventCollectOptions{})
+}
+
+func (p *Provider) CollectUsageEventsInRange(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
+	return p.collectUsageEvents(baseDir, opts)
+}
+
+func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
 	if baseDir == "" {
 		baseDir = defaultKimiSessionsDir()
 	}
@@ -153,7 +161,18 @@ func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, er
 			sessionPath := filepath.Join(workDirPath, sd.Name())
 			wirePath := filepath.Join(sessionPath, "wire.jsonl")
 
-			if _, err := os.Stat(wirePath); err != nil {
+			info, err := os.Stat(wirePath)
+			if err != nil {
+				continue
+			}
+
+			if opts.Metrics != nil {
+				opts.Metrics.ConsideredFiles++
+			}
+			if shouldSkipKimiWirePath(info.ModTime(), opts) {
+				if opts.Metrics != nil {
+					opts.Metrics.SkippedFiles++
+				}
 				continue
 			}
 
@@ -162,6 +181,9 @@ func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, er
 		}
 	}
 
+	if opts.Metrics != nil {
+		opts.Metrics.ParsedFiles += len(paths)
+	}
 	eventBatches := provider.ParseParallel(paths, 0, func(path string) ([]provider.UsageEvent, error) {
 		return parseSessionUsageEvents(path, pathToHash[path], sessionModelIndex)
 	})
@@ -170,8 +192,18 @@ func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, er
 	for _, batch := range eventBatches {
 		events = append(events, batch...)
 	}
+	if opts.Metrics != nil {
+		opts.Metrics.EmittedEvents += len(events)
+	}
 
 	return events, nil
+}
+
+func shouldSkipKimiWirePath(modTime time.Time, opts provider.UsageEventCollectOptions) bool {
+	if !opts.HasRange() {
+		return false
+	}
+	return opts.ShouldSkipFileByModTime(modTime)
 }
 
 // parseSession parses a single session directory.

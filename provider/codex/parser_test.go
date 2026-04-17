@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/miss-you/codetok/provider"
 	"github.com/miss-you/codetok/stats"
 )
 
@@ -1025,6 +1026,133 @@ func BenchmarkParseCodexUsageEventsSynthetic(b *testing.B) {
 	}
 }
 
+func TestCollectCodexUsageEventsInRange_SkipsInactiveDatedFiles(t *testing.T) {
+	baseDir := t.TempDir()
+	inactivePath := writeCodexUsageFile(t, baseDir, "2026", "04", "10", "rollout-old.jsonl", "old-session", []codexUsageFixtureEvent{{
+		Timestamp: time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC),
+		Input:     100,
+		Output:    10,
+	}})
+	activePath := writeCodexUsageFile(t, baseDir, "2026", "04", "16", "rollout-active.jsonl", "active-session", []codexUsageFixtureEvent{{
+		Timestamp: time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC),
+		Input:     200,
+		Output:    20,
+	}})
+	oldModTime := time.Date(2026, 4, 10, 11, 0, 0, 0, time.UTC)
+	activeModTime := time.Date(2026, 4, 16, 11, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(inactivePath, oldModTime, oldModTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(activePath, activeModTime, activeModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 || events[0].SessionID != "active-session" {
+		t.Fatalf("events = %#v, want only active-session", events)
+	}
+	if metrics.ConsideredFiles != 2 || metrics.SkippedFiles != 1 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 1 {
+		t.Fatalf("metrics = %+v, want considered=2 skipped=1 parsed=1 emitted=1", metrics)
+	}
+}
+
+func TestCollectCodexUsageEventsInRange_KeepsPreviousDayFileWithInWindowEvent(t *testing.T) {
+	baseDir := t.TempDir()
+	path := writeCodexUsageFile(t, baseDir, "2026", "04", "15", "rollout-cross-day.jsonl", "cross-day", []codexUsageFixtureEvent{
+		{Timestamp: time.Date(2026, 4, 15, 23, 55, 0, 0, time.UTC), Input: 1000, Cached: 200, Output: 300},
+		{Timestamp: time.Date(2026, 4, 16, 0, 10, 0, 0, time.UTC), Input: 1500, Cached: 250, Output: 450},
+	})
+	oldModTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, oldModTime, oldModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want previous-day candidate events: %#v", len(events), events)
+	}
+	if metrics.ConsideredFiles != 1 || metrics.SkippedFiles != 0 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 2 {
+		t.Fatalf("metrics = %+v, want considered=1 skipped=0 parsed=1 emitted=2", metrics)
+	}
+}
+
+func TestCollectCodexUsageEventsInRange_KeepsOlderFileWithRecentModTime(t *testing.T) {
+	baseDir := t.TempDir()
+	path := writeCodexUsageFile(t, baseDir, "2026", "04", "01", "rollout-long-session.jsonl", "long-session", []codexUsageFixtureEvent{{
+		Timestamp: time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC),
+		Input:     500,
+		Output:    50,
+	}})
+	recentModTime := time.Date(2026, 4, 16, 13, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, recentModTime, recentModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 || events[0].SessionID != "long-session" {
+		t.Fatalf("events = %#v, want long-session candidate", events)
+	}
+	if metrics.ConsideredFiles != 1 || metrics.SkippedFiles != 0 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 1 {
+		t.Fatalf("metrics = %+v, want considered=1 skipped=0 parsed=1 emitted=1", metrics)
+	}
+}
+
+func TestCollectCodexUsageEventsInRange_KeepsUnparseableDatedPath(t *testing.T) {
+	baseDir := t.TempDir()
+	path := writeCodexUsageFile(t, baseDir, "2026", "4", "16", "rollout-legacy-layout.jsonl", "legacy-layout", []codexUsageFixtureEvent{{
+		Timestamp: time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC),
+		Input:     600,
+		Output:    60,
+	}})
+	oldModTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, oldModTime, oldModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 || events[0].SessionID != "legacy-layout" {
+		t.Fatalf("events = %#v, want legacy-layout candidate", events)
+	}
+	if metrics.ConsideredFiles != 1 || metrics.SkippedFiles != 0 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 1 {
+		t.Fatalf("metrics = %+v, want considered=1 skipped=0 parsed=1 emitted=1", metrics)
+	}
+}
+
 func writeCodexSessionFile(t *testing.T, baseDir, year, month, day, name, sessionID, title string) string {
 	t.Helper()
 
@@ -1041,4 +1169,35 @@ func writeCodexSessionFile(t *testing.T, baseDir, year, month, day, name, sessio
 		t.Fatal(err)
 	}
 	return path
+}
+
+type codexUsageFixtureEvent struct {
+	Timestamp time.Time
+	Input     int
+	Cached    int
+	Output    int
+}
+
+func writeCodexUsageFile(t *testing.T, baseDir, year, month, day, name, sessionID string, events []codexUsageFixtureEvent) string {
+	t.Helper()
+	dir := filepath.Join(baseDir, year, month, day)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	content := `{"timestamp":"` + events[0].Timestamp.Format(time.RFC3339) + `","type":"session_meta","payload":{"id":"` + sessionID + `","timestamp":"` + events[0].Timestamp.Format(time.RFC3339) + `","cwd":"/test"}}
+{"timestamp":"` + events[0].Timestamp.Add(time.Second).Format(time.RFC3339) + `","type":"turn_context","payload":{"model":"gpt-5.4"}}
+`
+	for _, event := range events {
+		total := event.Input + event.Output
+		content += `{"timestamp":"` + event.Timestamp.Format(time.RFC3339) + `","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":` + intString(event.Input) + `,"cached_input_tokens":` + intString(event.Cached) + `,"output_tokens":` + intString(event.Output) + `,"total_tokens":` + intString(total) + `}}}}` + "\n"
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func intString(n int) string {
+	return fmt.Sprintf("%d", n)
 }

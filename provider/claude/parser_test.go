@@ -1,12 +1,16 @@
 package claude
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/miss-you/codetok/provider"
 )
 
 func TestParseClaudeSession_ValidData(t *testing.T) {
@@ -439,6 +443,156 @@ func TestCollectClaudeUsageEvents_IncludesSubagentPaths(t *testing.T) {
 	}
 }
 
+func TestCollectClaudeUsageEventsInRange_SkipsInactiveFilesByModTime(t *testing.T) {
+	baseDir := t.TempDir()
+	projectDir := filepath.Join(baseDir, "project-x")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := writeClaudeUsageFixture(t, projectDir, "old-session.jsonl", "old-session", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), 100)
+	activePath := writeClaudeUsageFixture(t, projectDir, "active-session.jsonl", "active-session", time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC), 200)
+	oldModTime := time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC)
+	activeModTime := time.Date(2026, 4, 16, 11, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(oldPath, oldModTime, oldModTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(activePath, activeModTime, activeModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 || events[0].SessionID != "active-session" {
+		t.Fatalf("events = %#v, want only active-session", events)
+	}
+	if metrics.ConsideredFiles != 2 || metrics.SkippedFiles != 1 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 1 {
+		t.Fatalf("metrics = %+v, want considered=2 skipped=1 parsed=1 emitted=1", metrics)
+	}
+}
+
+func TestCollectClaudeUsageEventsInRange_KeepsCrossDayFileModifiedAfterUntil(t *testing.T) {
+	baseDir := t.TempDir()
+	projectDir := filepath.Join(baseDir, "project-x")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(projectDir, "cross-day.jsonl")
+	content := `{"type":"assistant","requestId":"req-1","sessionId":"cross-day","timestamp":"2026-04-15T23:55:00Z","message":{"id":"msg-1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"before"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}
+{"type":"assistant","requestId":"req-2","sessionId":"cross-day","timestamp":"2026-04-16T00:05:00Z","message":{"id":"msg-2","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"inside"}],"usage":{"input_tokens":200,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":20}}}
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	afterUntil := time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, afterUntil, afterUntil); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want both candidate events before final stats filtering: %#v", len(events), events)
+	}
+	if metrics.ConsideredFiles != 1 || metrics.SkippedFiles != 0 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 2 {
+		t.Fatalf("metrics = %+v, want considered=1 skipped=0 parsed=1 emitted=2", metrics)
+	}
+}
+
+func TestCollectClaudeUsageEventsWithParser_ParsesInParallelAndSorts(t *testing.T) {
+	paths := []string{"file-c.jsonl", "file-a.jsonl", "bad.jsonl", "file-b.jsonl"}
+	pathToSlug := map[string]string{
+		"file-a.jsonl": "project-a",
+		"file-b.jsonl": "project-b",
+		"file-c.jsonl": "project-c",
+		"bad.jsonl":    "project-bad",
+	}
+
+	var active int64
+	var maxActive int64
+	started := make(chan string, len(paths))
+	release := make(chan struct{})
+	parser := func(path, projectSlug string) ([]provider.UsageEvent, error) {
+		current := atomic.AddInt64(&active, 1)
+		for {
+			observed := atomic.LoadInt64(&maxActive)
+			if current <= observed || atomic.CompareAndSwapInt64(&maxActive, observed, current) {
+				break
+			}
+		}
+		defer atomic.AddInt64(&active, -1)
+
+		started <- path
+		<-release
+		if path == "bad.jsonl" {
+			return nil, errors.New("skip this file")
+		}
+		return []provider.UsageEvent{{
+			ProviderName: "claude",
+			WorkDirHash:  projectSlug,
+			SourcePath:   path,
+			Timestamp:    time.Date(2026, 4, 16, len(path), 0, 0, 0, time.UTC),
+			EventID:      path + ":event",
+		}}, nil
+	}
+
+	resultCh := make(chan []provider.UsageEvent, 1)
+	go func() {
+		resultCh <- collectUsageEventsWithParser(paths, pathToSlug, 2, parser)
+	}()
+
+	startedPaths := make(map[string]bool)
+	for len(startedPaths) < 2 {
+		select {
+		case path := <-started:
+			startedPaths[path] = true
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatalf("timed out waiting for two concurrent parser starts; saw %v", startedPaths)
+		}
+	}
+	close(release)
+
+	var events []provider.UsageEvent
+	select {
+	case events = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for parallel collection to finish")
+	}
+	if got := atomic.LoadInt64(&maxActive); got < 2 {
+		t.Fatalf("max concurrent parses = %d, want bounded parallel parsing with at least 2 active workers", got)
+	} else if got > 2 {
+		t.Fatalf("max concurrent parses = %d, want worker limit 2", got)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3 successful parses", len(events))
+	}
+	wantPaths := []string{"file-a.jsonl", "file-b.jsonl", "file-c.jsonl"}
+	for i, want := range wantPaths {
+		if events[i].SourcePath != want {
+			t.Fatalf("event[%d].SourcePath = %q, want deterministic source order %q in %#v", i, events[i].SourcePath, want, events)
+		}
+	}
+	if events[0].WorkDirHash != "project-a" || events[1].WorkDirHash != "project-b" || events[2].WorkDirHash != "project-c" {
+		t.Fatalf("events did not receive project slugs from path map: %#v", events)
+	}
+}
+
 func BenchmarkCollectClaudeUsageEventsSynthetic(b *testing.B) {
 	const (
 		projectCount    = 4
@@ -502,6 +656,22 @@ func writeSyntheticClaudeUsageTree(tb testing.TB, baseDir string, projectCount, 
 		}
 	}
 	return totalFiles
+}
+
+func writeClaudeUsageFixture(t *testing.T, dir, name, sessionID string, timestamp time.Time, input int) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	content := fmt.Sprintf(`{"type":"assistant","requestId":"req-%s","sessionId":"%s","timestamp":"%s","message":{"id":"msg-%s","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"fixture"}],"usage":{"input_tokens":%d,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}`+"\n",
+		sessionID,
+		sessionID,
+		timestamp.Format(time.RFC3339),
+		sessionID,
+		input,
+	)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func mustParseTime(t *testing.T, value string) time.Time {

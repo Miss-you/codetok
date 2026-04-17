@@ -254,6 +254,47 @@ func TestEventBasedCrossDayAcceptance(t *testing.T) {
 		}
 	})
 
+	t.Run("daily all JSON keeps full-history cross-day totals", func(t *testing.T) {
+		args := append([]string{}, providerArgs...)
+		args = append(args,
+			"daily", "--json",
+			"--all",
+			"--timezone", "UTC",
+		)
+		output := runCodetok(t, bin, args...)
+
+		var daily []provider.DailyStats
+		if err := json.Unmarshal([]byte(output), &daily); err != nil {
+			t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+		}
+
+		expected := map[crossDayDailyKey]provider.TokenUsage{
+			{date: "2026-04-15", provider: "claude"}: {InputOther: 10, Output: 3, InputCacheRead: 2, InputCacheCreate: 1},
+			{date: "2026-04-15", provider: "codex"}:  {InputOther: 800, Output: 300, InputCacheRead: 200},
+			{date: "2026-04-15", provider: "kimi"}:   {InputOther: 100, Output: 50, InputCacheRead: 200, InputCacheCreate: 10},
+			{date: "2026-04-16", provider: "claude"}: {InputOther: 20, Output: 6, InputCacheRead: 5, InputCacheCreate: 4},
+			{date: "2026-04-16", provider: "codex"}:  {InputOther: 450, Output: 150, InputCacheRead: 50},
+			{date: "2026-04-16", provider: "kimi"}:   {InputOther: 150, Output: 75, InputCacheRead: 300, InputCacheCreate: 20},
+		}
+		if len(daily) != len(expected) {
+			t.Fatalf("expected %d daily rows, got %d: %s", len(expected), len(daily), output)
+		}
+		for _, row := range daily {
+			key := crossDayDailyKey{date: row.Date, provider: row.ProviderName}
+			want, ok := expected[key]
+			if !ok {
+				t.Fatalf("unexpected daily row for date/provider %#v: %#v", key, row)
+			}
+			if row.TokenUsage != want {
+				t.Errorf("%s/%s token_usage = %+v, want %+v", row.Date, row.ProviderName, row.TokenUsage, want)
+			}
+			delete(expected, key)
+		}
+		if len(expected) != 0 {
+			t.Fatalf("missing daily rows: %#v", expected)
+		}
+	})
+
 	t.Run("session JSON includes only UTC in-range event totals", func(t *testing.T) {
 		args := append([]string{}, providerArgs...)
 		args = append(args,

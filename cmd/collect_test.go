@@ -36,13 +36,29 @@ type collectTestUsageEventProvider struct {
 	collectTestProvider
 	events        []provider.UsageEvent
 	eventErr      error
+	rangeEvents   []provider.UsageEvent
+	rangeErr      error
 	seenEventDirs []string
+	seenRangeDirs []string
+	seenRangeOpts []provider.UsageEventCollectOptions
 }
 
 func (p *collectTestUsageEventProvider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
 	p.seenEventDirs = append(p.seenEventDirs, baseDir)
 	if p.eventErr != nil {
 		return nil, p.eventErr
+	}
+	return p.events, nil
+}
+
+func (p *collectTestUsageEventProvider) CollectUsageEventsInRange(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
+	p.seenRangeDirs = append(p.seenRangeDirs, baseDir)
+	p.seenRangeOpts = append(p.seenRangeOpts, opts)
+	if p.rangeErr != nil {
+		return nil, p.rangeErr
+	}
+	if p.rangeEvents != nil {
+		return p.rangeEvents, nil
 	}
 	return p.events, nil
 }
@@ -188,6 +204,101 @@ func TestCollectUsageEventsFromProviders_UsesNativeEvents(t *testing.T) {
 	}
 	if len(native.seenDirs) != 0 {
 		t.Fatalf("native provider should not fall back to sessions, seen %v", native.seenDirs)
+	}
+}
+
+func TestCollectUsageEventsFromProviders_UsesRangeAwareCollectorWhenWindowProvided(t *testing.T) {
+	loc := mustLoadLocation(t, "Asia/Shanghai")
+	since := time.Date(2026, 4, 10, 0, 0, 0, 0, loc)
+	until := time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), loc)
+	wantEvent := provider.UsageEvent{
+		ProviderName: "native",
+		SessionID:    "range-session",
+		Timestamp:    since.Add(time.Hour),
+		TokenUsage:   provider.TokenUsage{InputOther: 10},
+	}
+	native := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "native"},
+		eventErr:            errors.New("full-history collector called"),
+		rangeEvents:         []provider.UsageEvent{wantEvent},
+	}
+	cmd := newCollectTestCommand("native")
+	if err := cmd.Flags().Set("base-dir", "/shared"); err != nil {
+		t.Fatalf("setting --base-dir: %v", err)
+	}
+	if err := cmd.Flags().Set("native-dir", "/native-only"); err != nil {
+		t.Fatalf("setting --native-dir: %v", err)
+	}
+
+	events, err := collectUsageEventsFromProvidersInRange(cmd, []provider.Provider{native}, provider.UsageEventCollectOptions{
+		Since:    since,
+		Until:    until,
+		Location: loc,
+	})
+	if err != nil {
+		t.Fatalf("collectUsageEventsFromProvidersInRange returned error: %v", err)
+	}
+
+	if !reflect.DeepEqual(events, []provider.UsageEvent{wantEvent}) {
+		t.Fatalf("events = %#v, want range event", events)
+	}
+	if len(native.seenEventDirs) != 0 {
+		t.Fatalf("full-history collector should not be called, seen %v", native.seenEventDirs)
+	}
+	if len(native.seenRangeDirs) != 1 || native.seenRangeDirs[0] != "/native-only" {
+		t.Fatalf("range dirs = %v, want [/native-only]", native.seenRangeDirs)
+	}
+	if len(native.seenRangeOpts) != 1 {
+		t.Fatalf("range opts seen %d times, want 1", len(native.seenRangeOpts))
+	}
+	gotOpts := native.seenRangeOpts[0]
+	if !gotOpts.Since.Equal(since) || !gotOpts.Until.Equal(until) || gotOpts.Location != loc {
+		t.Fatalf("range opts = %+v, want since=%v until=%v loc=%v", gotOpts, since, until, loc)
+	}
+}
+
+func TestCollectUsageEventsFromProviders_FullHistoryBypassesRangeAwareCollector(t *testing.T) {
+	wantEvent := provider.UsageEvent{ProviderName: "native", SessionID: "full-history"}
+	native := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "native"},
+		events:              []provider.UsageEvent{wantEvent},
+		rangeErr:            errors.New("range collector called"),
+	}
+	cmd := newCollectTestCommand("native")
+
+	events, err := collectUsageEventsFromProviders(cmd, []provider.Provider{native})
+	if err != nil {
+		t.Fatalf("collectUsageEventsFromProviders returned error: %v", err)
+	}
+
+	if !reflect.DeepEqual(events, []provider.UsageEvent{wantEvent}) {
+		t.Fatalf("events = %#v, want full-history event", events)
+	}
+	if len(native.seenRangeDirs) != 0 {
+		t.Fatalf("range collector should not be called, seen %v", native.seenRangeDirs)
+	}
+}
+
+func TestCollectUsageEventsFromProviders_ReturnsRangeAwareProviderErrors(t *testing.T) {
+	boom := errors.New("boom")
+	bad := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "bad"},
+		eventErr:            errors.New("full-history collector called"),
+		rangeErr:            boom,
+	}
+	cmd := newCollectTestCommand("bad")
+
+	_, err := collectUsageEventsFromProvidersInRange(cmd, []provider.Provider{bad}, provider.UsageEventCollectOptions{
+		Since: time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "collecting usage events from bad") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("wrapped error should contain root cause, got: %v", err)
 	}
 }
 
