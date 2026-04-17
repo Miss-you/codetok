@@ -83,7 +83,7 @@ Direct profiling showed that the current bottleneck is provider parsing, not das
 - `provider/codex.parseCodexUsageEvents` and `provider/claude.parseUsageEvents` dominated application-level parser time.
 - Allocation churn is high during parsing, but retained heap after GC is small.
 
-Reference repo notes from `/Users/lihui/Documents/GitHub/ccusage`:
+Reference repo notes from a local checkout of `ccusage`:
 
 - `ccusage` preserves event-level attribution for Codex usage.
 - Its Claude loader uses streaming line-by-line JSONL processing.
