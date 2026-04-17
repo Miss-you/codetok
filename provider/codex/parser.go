@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -33,6 +34,8 @@ type codexEvent struct {
 
 // sessionMetaPayload holds the session_meta payload.
 type sessionMetaPayload struct {
+	codexModelFields
+
 	ID        string `json:"id"`
 	Timestamp string `json:"timestamp"`
 	Cwd       string `json:"cwd"`
@@ -40,39 +43,42 @@ type sessionMetaPayload struct {
 
 // eventMsgPayload holds the event_msg payload envelope.
 type eventMsgPayload struct {
+	codexNamedModelFields
+
 	Type    string          `json:"type"`
 	Model   string          `json:"model"`
 	Message string          `json:"message"`
 	Info    json.RawMessage `json:"info"`
+	Context json.RawMessage `json:"context"`
+	Payload json.RawMessage `json:"payload"`
 }
 
-var codexModelPaths = [][]string{
-	{"model"},
-	{"model_name"},
-	{"modelName"},
-	{"model_id"},
-	{"modelId"},
-	{"selected_model"},
-	{"default_model"},
-	{"context", "model"},
-	{"context", "model_name"},
-	{"context", "modelName"},
-	{"context", "model_id"},
-	{"context", "modelId"},
-	{"info", "model"},
-	{"info", "model_name"},
-	{"info", "modelName"},
-	{"info", "model_id"},
-	{"info", "modelId"},
-	{"payload", "model"},
-	{"payload", "model_name"},
-	{"payload", "modelName"},
-	{"payload", "model_id"},
-	{"payload", "modelId"},
+type codexDirectModelFields struct {
+	ModelDirect string `json:"model"`
+	codexNamedModelFields
+}
+
+type codexNamedModelFields struct {
+	ModelName     string `json:"model_name"`
+	ModelNameJSON string `json:"modelName"`
+	ModelID       string `json:"model_id"`
+	ModelIDJSON   string `json:"modelId"`
+	SelectedModel string `json:"selected_model"`
+	DefaultModel  string `json:"default_model"`
+}
+
+type codexModelFields struct {
+	codexDirectModelFields
+
+	Context json.RawMessage `json:"context"`
+	Info    json.RawMessage `json:"info"`
+	Payload json.RawMessage `json:"payload"`
 }
 
 // tokenCountInfo holds the token_count info field.
 type tokenCountInfo struct {
+	codexModelFields
+
 	LastTokenUsage  *codexTokenUsage `json:"last_token_usage"`
 	TotalTokenUsage *codexTokenUsage `json:"total_token_usage"`
 }
@@ -335,7 +341,7 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 				}
 			}
 			if info.ModelName == "" {
-				info.ModelName = extractModelFromRawJSON(event.Payload)
+				info.ModelName = meta.firstModel()
 			}
 
 		case "event_msg":
@@ -343,38 +349,42 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 			if err := json.Unmarshal(event.Payload, &msg); err != nil {
 				continue
 			}
-			if info.ModelName == "" {
-				candidate := strings.TrimSpace(msg.Model)
-				if isLikelyCodexModelName(candidate) {
-					info.ModelName = candidate
-				}
-				if info.ModelName == "" {
-					info.ModelName = extractModelFromRawJSON(msg.Info)
-				}
-				if info.ModelName == "" {
-					info.ModelName = extractModelFromRawJSON(event.Payload)
-				}
-			}
 
 			switch msg.Type {
 			case "user_message":
+				if info.ModelName == "" {
+					info.ModelName = msg.firstModel(extractModelFromRawJSON(msg.Info))
+				}
 				turns++
 				if info.Title == "" && msg.Message != "" {
 					info.Title = msg.Message
 				}
 
 			case "token_count":
-				if msg.Info == nil || string(msg.Info) == "null" {
+				if len(msg.Info) == 0 || bytes.Equal(bytes.TrimSpace(msg.Info), []byte("null")) {
+					if info.ModelName == "" {
+						info.ModelName = msg.firstModel("")
+					}
 					continue
 				}
 				var tci tokenCountInfo
 				if err := json.Unmarshal(msg.Info, &tci); err != nil {
+					if info.ModelName == "" {
+						info.ModelName = msg.firstModel(extractModelFromRawJSON(msg.Info))
+					}
 					continue
+				}
+				if info.ModelName == "" {
+					info.ModelName = msg.firstModel(tci.firstModel())
 				}
 				delta, ok := codexUsageDelta(tci, &usageState)
 				if ok && delta.Total() != 0 {
 					addCodexTokenUsage(&usage, delta)
 					hasUsage = true
+				}
+			default:
+				if info.ModelName == "" {
+					info.ModelName = msg.firstModel(extractModelFromRawJSON(msg.Info))
 				}
 			}
 
@@ -440,7 +450,7 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 					events[i].SessionID = sessionID
 				}
 			}
-			if model := extractModelFromRawJSON(event.Payload); model != "" {
+			if model := meta.firstModel(); model != "" {
 				currentModel = model
 			}
 
@@ -449,12 +459,12 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 			if err := json.Unmarshal(event.Payload, &msg); err != nil {
 				continue
 			}
-			if model := firstCodexModel(msg.Model, extractModelFromRawJSON(msg.Info), extractModelFromRawJSON(event.Payload)); model != "" {
-				currentModel = model
-			}
 
 			switch msg.Type {
 			case "user_message":
+				if model := msg.firstModel(extractModelFromRawJSON(msg.Info)); model != "" {
+					currentModel = model
+				}
 				if title == "" && strings.TrimSpace(msg.Message) != "" {
 					title = strings.TrimSpace(msg.Message)
 					for i := range events {
@@ -465,15 +475,24 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 				}
 
 			case "token_count":
-				if msg.Info == nil || string(msg.Info) == "null" {
-					continue
-				}
-				ts, err := time.Parse(time.RFC3339Nano, event.Timestamp)
-				if err != nil {
+				if len(msg.Info) == 0 || bytes.Equal(bytes.TrimSpace(msg.Info), []byte("null")) {
+					if model := msg.firstModel(""); model != "" {
+						currentModel = model
+					}
 					continue
 				}
 				var tci tokenCountInfo
 				if err := json.Unmarshal(msg.Info, &tci); err != nil {
+					if model := msg.firstModel(extractModelFromRawJSON(msg.Info)); model != "" {
+						currentModel = model
+					}
+					continue
+				}
+				if model := msg.firstModel(tci.firstModel()); model != "" {
+					currentModel = model
+				}
+				ts, err := time.Parse(time.RFC3339Nano, event.Timestamp)
+				if err != nil {
 					continue
 				}
 				usage, ok := codexUsageDelta(tci, &usageState)
@@ -490,6 +509,11 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 					SourcePath:   path,
 					EventID:      fmt.Sprintf("%s:%d", path, lineNumber),
 				})
+
+			default:
+				if model := msg.firstModel(extractModelFromRawJSON(msg.Info)); model != "" {
+					currentModel = model
+				}
 			}
 
 		default:
@@ -595,42 +619,311 @@ func firstCodexModel(candidates ...string) string {
 	return ""
 }
 
-func extractModelFromRawJSON(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
-		return ""
-	}
-
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return ""
-	}
-	for _, path := range codexModelPaths {
-		if model := extractStringByPath(v, path); isLikelyCodexModelName(model) {
-			return model
-		}
-	}
-	return ""
+func (f codexDirectModelFields) firstModel() string {
+	return firstCodexModel(
+		f.ModelDirect,
+		f.codexNamedModelFields.firstModel(),
+	)
 }
 
-func extractStringByPath(root any, path []string) string {
-	current := root
-	for _, segment := range path {
-		node, ok := current.(map[string]any)
-		if !ok {
-			return ""
-		}
-		next, ok := node[segment]
-		if !ok {
-			return ""
-		}
-		current = next
-	}
+func (f codexNamedModelFields) firstModel() string {
+	return firstCodexModel(
+		f.ModelName,
+		f.ModelNameJSON,
+		f.ModelID,
+		f.ModelIDJSON,
+		f.SelectedModel,
+		f.DefaultModel,
+	)
+}
 
-	value, ok := current.(string)
-	if !ok {
+func (f codexModelFields) firstModel() string {
+	if model := f.codexDirectModelFields.firstModel(); model != "" {
+		return model
+	}
+	return firstCodexModel(
+		extractModelFromRawJSON(f.Context),
+		extractModelFromRawJSON(f.Info),
+		extractModelFromRawJSON(f.Payload),
+	)
+}
+
+func (m eventMsgPayload) firstModel(infoModel string) string {
+	return firstCodexModel(
+		m.Model,
+		infoModel,
+		m.payloadModelWithoutInfo(),
+	)
+}
+
+func (m eventMsgPayload) payloadModelWithoutInfo() string {
+	return firstCodexModel(
+		m.codexNamedModelFields.firstModel(),
+		extractModelFromRawJSON(m.Context),
+		extractModelFromRawJSON(m.Payload),
+	)
+}
+
+const maxCodexModelExtractionDepth = 1
+
+func extractModelFromRawJSON(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) || raw[0] != '{' {
 		return ""
 	}
-	return strings.TrimSpace(value)
+
+	model, _ := extractModelFromObject(raw, 0)
+	return model
+}
+
+func extractModelFromObject(raw []byte, depth int) (string, bool) {
+	var direct codexDirectModelFields
+	var nested codexNestedModelRaw
+
+	ok := scanJSONObjectFields(raw, func(key, value []byte) bool {
+		if handleEscapedCodexModelKey(key, value, &direct, &nested) {
+			return true
+		}
+		switch {
+		case bytes.Equal(key, []byte("model")):
+			direct.ModelDirect = modelStringFromJSONValue(value)
+		case bytes.Equal(key, []byte("model_name")):
+			direct.ModelName = modelStringFromJSONValue(value)
+		case bytes.Equal(key, []byte("modelName")):
+			direct.ModelNameJSON = modelStringFromJSONValue(value)
+		case bytes.Equal(key, []byte("model_id")):
+			direct.ModelID = modelStringFromJSONValue(value)
+		case bytes.Equal(key, []byte("modelId")):
+			direct.ModelIDJSON = modelStringFromJSONValue(value)
+		case bytes.Equal(key, []byte("selected_model")):
+			direct.SelectedModel = modelStringFromJSONValue(value)
+		case bytes.Equal(key, []byte("default_model")):
+			direct.DefaultModel = modelStringFromJSONValue(value)
+		case bytes.Equal(key, []byte("context")):
+			nested.contextRaw, nested.contextSet = value, true
+		case bytes.Equal(key, []byte("info")):
+			nested.infoRaw, nested.infoSet = value, true
+		case bytes.Equal(key, []byte("payload")):
+			nested.payloadRaw, nested.payloadSet = value, true
+		}
+		return true
+	})
+	if !ok {
+		return "", false
+	}
+	if model := direct.firstModel(); model != "" {
+		return model, true
+	}
+	if depth >= maxCodexModelExtractionDepth {
+		return "", true
+	}
+	for _, candidate := range []struct {
+		raw []byte
+		set bool
+	}{
+		{nested.contextRaw, nested.contextSet},
+		{nested.infoRaw, nested.infoSet},
+		{nested.payloadRaw, nested.payloadSet},
+	} {
+		if !candidate.set {
+			continue
+		}
+		model, ok := extractModelFromObject(bytes.TrimSpace(candidate.raw), depth+1)
+		if ok && model != "" {
+			return model, true
+		}
+	}
+	return "", true
+}
+
+type codexNestedModelRaw struct {
+	contextRaw []byte
+	contextSet bool
+	infoRaw    []byte
+	infoSet    bool
+	payloadRaw []byte
+	payloadSet bool
+}
+
+func handleEscapedCodexModelKey(key, value []byte, direct *codexDirectModelFields, nested *codexNestedModelRaw) bool {
+	if !bytes.Contains(key, []byte("\\")) {
+		return false
+	}
+	keyJSON := make([]byte, 0, len(key)+2)
+	keyJSON = append(keyJSON, '"')
+	keyJSON = append(keyJSON, key...)
+	keyJSON = append(keyJSON, '"')
+	name, ok := unquoteJSONString(keyJSON)
+	if !ok {
+		return true
+	}
+	switch name {
+	case "model":
+		direct.ModelDirect = modelStringFromJSONValue(value)
+	case "model_name":
+		direct.ModelName = modelStringFromJSONValue(value)
+	case "modelName":
+		direct.ModelNameJSON = modelStringFromJSONValue(value)
+	case "model_id":
+		direct.ModelID = modelStringFromJSONValue(value)
+	case "modelId":
+		direct.ModelIDJSON = modelStringFromJSONValue(value)
+	case "selected_model":
+		direct.SelectedModel = modelStringFromJSONValue(value)
+	case "default_model":
+		direct.DefaultModel = modelStringFromJSONValue(value)
+	case "context":
+		nested.contextRaw, nested.contextSet = value, true
+	case "info":
+		nested.infoRaw, nested.infoSet = value, true
+	case "payload":
+		nested.payloadRaw, nested.payloadSet = value, true
+	}
+	return true
+}
+
+func scanJSONObjectFields(raw []byte, visit func(key, value []byte) bool) bool {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '{' {
+		return false
+	}
+
+	for i := 1; i < len(raw); {
+		i = skipJSONSpace(raw, i)
+		if i >= len(raw) {
+			return false
+		}
+		if raw[i] == '}' {
+			return true
+		}
+		if raw[i] == ',' {
+			i++
+			continue
+		}
+		if raw[i] != '"' {
+			return false
+		}
+		keyStart := i + 1
+		keyEnd, next, ok := scanJSONString(raw, i)
+		if !ok {
+			return false
+		}
+		key := raw[keyStart:keyEnd]
+		i = skipJSONSpace(raw, next)
+		if i >= len(raw) || raw[i] != ':' {
+			return false
+		}
+		i = skipJSONSpace(raw, i+1)
+		valueStart := i
+		valueEnd, ok := scanJSONValue(raw, i)
+		if !ok {
+			return false
+		}
+		if !visit(key, raw[valueStart:valueEnd]) {
+			return true
+		}
+		i = valueEnd
+	}
+	return false
+}
+
+func modelStringFromJSONValue(value []byte) string {
+	value = bytes.TrimSpace(value)
+	if len(value) == 0 || value[0] != '"' {
+		return ""
+	}
+	end, next, ok := scanJSONString(value, 0)
+	if !ok || next != len(value) {
+		return ""
+	}
+	rawString := value[:end+1]
+	var model string
+	if bytes.Contains(rawString, []byte("\\")) {
+		unquoted, ok := unquoteJSONString(rawString)
+		if !ok {
+			return ""
+		}
+		model = unquoted
+	} else {
+		model = string(value[1:end])
+	}
+	return firstCodexModel(model)
+}
+
+func unquoteJSONString(raw []byte) (string, bool) {
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false
+	}
+	return value, true
+}
+
+func scanJSONValue(raw []byte, start int) (int, bool) {
+	if start >= len(raw) {
+		return 0, false
+	}
+	switch raw[start] {
+	case '"':
+		_, next, ok := scanJSONString(raw, start)
+		return next, ok
+	case '{', '[':
+		return scanJSONComposite(raw, start)
+	default:
+		i := start
+		for i < len(raw) && raw[i] != ',' && raw[i] != '}' && raw[i] != ']' {
+			i++
+		}
+		return i, true
+	}
+}
+
+func scanJSONComposite(raw []byte, start int) (int, bool) {
+	depth := 0
+	for i := start; i < len(raw); i++ {
+		switch raw[i] {
+		case '"':
+			_, next, ok := scanJSONString(raw, i)
+			if !ok {
+				return 0, false
+			}
+			i = next - 1
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 {
+				return i + 1, true
+			}
+			if depth < 0 {
+				return 0, false
+			}
+		}
+	}
+	return 0, false
+}
+
+func scanJSONString(raw []byte, start int) (endQuote int, next int, ok bool) {
+	for i := start + 1; i < len(raw); i++ {
+		switch raw[i] {
+		case '\\':
+			i++
+		case '"':
+			return i, i + 1, true
+		}
+	}
+	return 0, 0, false
+}
+
+func skipJSONSpace(raw []byte, i int) int {
+	for i < len(raw) {
+		switch raw[i] {
+		case ' ', '\n', '\r', '\t':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
 }
 
 func isLikelyCodexModelName(name string) bool {
