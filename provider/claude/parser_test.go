@@ -454,6 +454,8 @@ func TestCollectClaudeUsageEventsWithParser_ParsesInParallelAndSorts(t *testing.
 
 	var active int64
 	var maxActive int64
+	started := make(chan string, len(paths))
+	release := make(chan struct{})
 	parser := func(path, projectSlug string) ([]provider.UsageEvent, error) {
 		current := atomic.AddInt64(&active, 1)
 		for {
@@ -464,7 +466,8 @@ func TestCollectClaudeUsageEventsWithParser_ParsesInParallelAndSorts(t *testing.
 		}
 		defer atomic.AddInt64(&active, -1)
 
-		time.Sleep(20 * time.Millisecond)
+		started <- path
+		<-release
 		if path == "bad.jsonl" {
 			return nil, errors.New("skip this file")
 		}
@@ -477,7 +480,29 @@ func TestCollectClaudeUsageEventsWithParser_ParsesInParallelAndSorts(t *testing.
 		}}, nil
 	}
 
-	events := collectUsageEventsWithParser(paths, pathToSlug, 2, parser)
+	resultCh := make(chan []provider.UsageEvent, 1)
+	go func() {
+		resultCh <- collectUsageEventsWithParser(paths, pathToSlug, 2, parser)
+	}()
+
+	startedPaths := make(map[string]bool)
+	for len(startedPaths) < 2 {
+		select {
+		case path := <-started:
+			startedPaths[path] = true
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatalf("timed out waiting for two concurrent parser starts; saw %v", startedPaths)
+		}
+	}
+	close(release)
+
+	var events []provider.UsageEvent
+	select {
+	case events = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for parallel collection to finish")
+	}
 	if got := atomic.LoadInt64(&maxActive); got < 2 {
 		t.Fatalf("max concurrent parses = %d, want bounded parallel parsing with at least 2 active workers", got)
 	} else if got > 2 {
