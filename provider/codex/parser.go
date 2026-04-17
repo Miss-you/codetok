@@ -174,7 +174,7 @@ func codexPathMayOverlapRange(path string, opts provider.UsageEventCollectOption
 	}
 	pathDate, ok := codexPathLocalDate(path, opts.Location)
 	if !ok {
-		return false
+		return true
 	}
 	loc := opts.Location
 	if loc == nil {

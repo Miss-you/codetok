@@ -295,6 +295,33 @@ func TestCollectUsageEventsInRange_FiltersCSVRowsWithoutUsingFileModTime(t *test
 	}
 }
 
+func TestCollectUsageEventsInRange_MetricsCountParseAttempts(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(baseDir, "broken.csv"), []byte("Date,Model\nbad,cursor-auto\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCursorCSVFixture(t, filepath.Join(baseDir, "valid.csv"),
+		`"2026-04-16T12:00:00Z","inside","cursor-auto","0","200","0","20"`,
+	)
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want one valid row: %#v", len(events), events)
+	}
+	if metrics.ConsideredFiles != 2 || metrics.SkippedFiles != 0 || metrics.ParsedFiles != 2 || metrics.EmittedEvents != 1 {
+		t.Fatalf("metrics = %+v, want considered=2 skipped=0 parsed=2 emitted=1", metrics)
+	}
+}
+
 func TestCollectUsageEventsInRange_ExplicitDirRules(t *testing.T) {
 	defaultRoot := t.TempDir()
 	explicitDir := t.TempDir()

@@ -399,12 +399,12 @@ func TestRunDaily_DefaultWindowPassesRangeToCollector(t *testing.T) {
 func TestRunDaily_InvalidDateFlagsAreRejectedBeforeCollection(t *testing.T) {
 	tests := []struct {
 		name      string
-		setFlags  func(*cobra.Command)
+		setFlags  func(*testing.T, *cobra.Command)
 		wantError string
 	}{
 		{
 			name: "--all with --since",
-			setFlags: func(cmd *cobra.Command) {
+			setFlags: func(t *testing.T, cmd *cobra.Command) {
 				if err := cmd.Flags().Set("all", "true"); err != nil {
 					t.Fatal(err)
 				}
@@ -416,7 +416,7 @@ func TestRunDaily_InvalidDateFlagsAreRejectedBeforeCollection(t *testing.T) {
 		},
 		{
 			name: "changed --days with --since",
-			setFlags: func(cmd *cobra.Command) {
+			setFlags: func(t *testing.T, cmd *cobra.Command) {
 				if err := cmd.Flags().Set("days", "3"); err != nil {
 					t.Fatal(err)
 				}
@@ -428,7 +428,7 @@ func TestRunDaily_InvalidDateFlagsAreRejectedBeforeCollection(t *testing.T) {
 		},
 		{
 			name: "invalid --days",
-			setFlags: func(cmd *cobra.Command) {
+			setFlags: func(t *testing.T, cmd *cobra.Command) {
 				if err := cmd.Flags().Set("days", "0"); err != nil {
 					t.Fatal(err)
 				}
@@ -445,7 +445,7 @@ func TestRunDaily_InvalidDateFlagsAreRejectedBeforeCollection(t *testing.T) {
 				rangeErr:            errors.New("range collector should not be called"),
 			}
 			cmd := newDailyTestCommand()
-			tt.setFlags(cmd)
+			tt.setFlags(t, cmd)
 
 			err := runDailyWithProviders(cmd, nil, []provider.Provider{eventProvider}, time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC))
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {

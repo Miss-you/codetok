@@ -92,12 +92,12 @@ func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCo
 		if opts.Metrics != nil {
 			opts.Metrics.ConsideredFiles++
 		}
+		if opts.Metrics != nil {
+			opts.Metrics.ParsedFiles++
+		}
 		parsed, err := parseUsageCSV(path)
 		if err != nil {
 			continue
-		}
-		if opts.Metrics != nil {
-			opts.Metrics.ParsedFiles++
 		}
 		for _, session := range parsed {
 			event := sessionUsageEvent(path, session)

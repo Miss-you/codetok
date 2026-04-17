@@ -161,14 +161,15 @@ func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCo
 			sessionPath := filepath.Join(workDirPath, sd.Name())
 			wirePath := filepath.Join(sessionPath, "wire.jsonl")
 
-			if _, err := os.Stat(wirePath); err != nil {
+			info, err := os.Stat(wirePath)
+			if err != nil {
 				continue
 			}
 
 			if opts.Metrics != nil {
 				opts.Metrics.ConsideredFiles++
 			}
-			if shouldSkipKimiWirePath(wirePath, opts) {
+			if shouldSkipKimiWirePath(info.ModTime(), opts) {
 				if opts.Metrics != nil {
 					opts.Metrics.SkippedFiles++
 				}
@@ -198,15 +199,11 @@ func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCo
 	return events, nil
 }
 
-func shouldSkipKimiWirePath(wirePath string, opts provider.UsageEventCollectOptions) bool {
+func shouldSkipKimiWirePath(modTime time.Time, opts provider.UsageEventCollectOptions) bool {
 	if !opts.HasRange() {
 		return false
 	}
-	info, err := os.Stat(wirePath)
-	if err != nil {
-		return true
-	}
-	return opts.ShouldSkipFileByModTime(info.ModTime())
+	return opts.ShouldSkipFileByModTime(modTime)
 }
 
 // parseSession parses a single session directory.

@@ -868,6 +868,36 @@ func TestCollectCodexUsageEventsInRange_KeepsOlderFileWithRecentModTime(t *testi
 	}
 }
 
+func TestCollectCodexUsageEventsInRange_KeepsUnparseableDatedPath(t *testing.T) {
+	baseDir := t.TempDir()
+	path := writeCodexUsageFile(t, baseDir, "2026", "4", "16", "rollout-legacy-layout.jsonl", "legacy-layout", []codexUsageFixtureEvent{{
+		Timestamp: time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC),
+		Input:     600,
+		Output:    60,
+	}})
+	oldModTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, oldModTime, oldModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 || events[0].SessionID != "legacy-layout" {
+		t.Fatalf("events = %#v, want legacy-layout candidate", events)
+	}
+	if metrics.ConsideredFiles != 1 || metrics.SkippedFiles != 0 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 1 {
+		t.Fatalf("metrics = %+v, want considered=1 skipped=0 parsed=1 emitted=1", metrics)
+	}
+}
+
 func writeCodexSessionFile(t *testing.T, baseDir, year, month, day, name, sessionID, title string) string {
 	t.Helper()
 

@@ -85,8 +85,10 @@ type UsageEventCollectOptions struct {
 type UsageEventCollectMetrics struct {
 	ConsideredFiles int
 	SkippedFiles    int
-	ParsedFiles     int
-	EmittedEvents   int
+	// ParsedFiles counts candidate files handed to a parser. Parsers may still
+	// discard malformed local files according to the provider's existing rules.
+	ParsedFiles   int
+	EmittedEvents int
 }
 
 // RangeAwareUsageEventProvider is implemented by providers that can narrow usage-event collection.
