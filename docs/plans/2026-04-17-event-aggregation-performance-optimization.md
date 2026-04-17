@@ -358,6 +358,210 @@ Conditional task decision:
 - EAP-004 is included in this final acceptance pass and remains done after rebase; its workspace evidence records the streaming daily path, and the refreshed materialized-vs-streaming benchmark confirms the command-level event-slice allocation reduction.
 - EAP-006 is included in this final acceptance pass and remains done after rebase. EAP-004 already removed the materialized daily filter/aggregate pass, so EAP-006 required no additional code and no EAP optimization tasks remain open.
 
+## Post-Implementation Benchmark Refresh
+
+On 2026-04-17, a follow-up benchmark pass was run from the main worktree after the optimization work was complete. This pass exists to document the measured shape of the current implementation, not to introduce permanent benchmark tooling.
+
+Scratch artifacts from this pass live under:
+
+`workspace/event-token-perf-2026-04-17-current/`
+
+The scratch harness is intentionally in `workspace/` because it captures local machine data and local provider logs. Do not commit the generated profiles or binary-size artifacts from this directory.
+
+### Benchmark Procedure
+
+Build the binary before CLI timing:
+
+```bash
+make build
+```
+
+Run built-binary wall-clock and memory sampling:
+
+```bash
+for i in 1 2 3 4 5; do
+  /usr/bin/time -l ./bin/codetok daily >/tmp/codetok-daily-dashboard.out
+done
+
+for i in 1 2 3 4 5; do
+  /usr/bin/time -l ./bin/codetok daily --json >/tmp/codetok-daily-json.out
+done
+
+for i in 1 2 3; do
+  /usr/bin/time -l ./bin/codetok daily --all >/tmp/codetok-daily-all.out
+done
+```
+
+Run provider-specific timing:
+
+```bash
+for p in codex claude kimi cursor; do
+  for i in 1 2 3; do
+    /usr/bin/time -l ./bin/codetok daily --provider "$p" >/tmp/codetok-daily-${p}.out
+  done
+done
+```
+
+Run the existing synthetic Go benchmarks:
+
+```bash
+go test ./cmd -bench BenchmarkDailyAggregationMaterializedVsStreaming -benchmem -count=5
+go test ./provider/codex -bench BenchmarkParseCodexUsageEventsSynthetic -benchmem -count=5
+```
+
+Run the scratch stage profiler:
+
+```bash
+go build -o workspace/event-token-perf-2026-04-17-current/tools/daily_stage_profile \
+  ./workspace/event-token-perf-2026-04-17-current/tools/daily_stage_profile.go
+
+./workspace/event-token-perf-2026-04-17-current/tools/daily_stage_profile
+
+./workspace/event-token-perf-2026-04-17-current/tools/daily_stage_profile \
+  -cpuprofile workspace/event-token-perf-2026-04-17-current/profiles/daily.cpu.pprof \
+  -allocprofile workspace/event-token-perf-2026-04-17-current/profiles/daily.allocs.pprof \
+  > workspace/event-token-perf-2026-04-17-current/logs/stage-default-profile.log
+
+go tool pprof -top -cum \
+  workspace/event-token-perf-2026-04-17-current/profiles/daily.cpu.pprof \
+  > workspace/event-token-perf-2026-04-17-current/profiles/daily.cpu.cum.top.txt
+
+go tool pprof -top -alloc_space \
+  workspace/event-token-perf-2026-04-17-current/profiles/daily.allocs.pprof \
+  > workspace/event-token-perf-2026-04-17-current/profiles/daily.alloc_space.top.txt
+```
+
+### Scratch Harness Code Shape
+
+The scratch profiler mirrors the current command path while exposing timing and metrics that normal CLI output should not print. It resolves the same default seven-day date window, asks range-aware providers to collect candidates, then applies exact event-date filtering before adding events to the incremental daily aggregator.
+
+The core measurement shape is:
+
+```go
+opts := provider.UsageEventCollectOptions{
+    Since:    since,
+    Until:    until,
+    Location: loc,
+    Metrics:  &metrics,
+}
+
+events, err := collectProvider(p, dir, opts)
+if err != nil {
+    if os.IsNotExist(err) {
+        continue
+    }
+    return err
+}
+
+filter := stats.NewEventDateRangeFilter(sinceDate, untilDate, loc)
+aggregator := stats.NewDailyEventAggregator(stats.AggregateDimensionCLI, loc)
+
+for _, event := range events {
+    if filter.Contains(event) {
+        aggregator.Add(event)
+    }
+}
+
+daily := aggregator.Results()
+```
+
+This is intentionally a measurement harness, not a new product API. The command implementation remains responsible for user-facing flags, stdout, JSON shape, and provider wiring.
+
+### Current Results
+
+Environment:
+
+- Apple M1 Pro, darwin/arm64
+- default local timezone during the run: Asia/Shanghai
+- default `daily` window resolved to `2026-04-11..2026-04-17`
+
+Built-binary timing:
+
+| Command | Runs | Wall time | CPU time | Max RSS |
+| --- | ---: | ---: | ---: | ---: |
+| `./bin/codetok daily` | 5 | avg 0.50s, median 0.49s | avg 2.90s user+sys | avg 77MiB |
+| `./bin/codetok daily --json` | 5 | avg 0.51s, warm avg 0.48s | avg 2.93s user+sys | avg 70MiB |
+| `./bin/codetok daily --all` | 3 | avg 1.77s | avg 10.85s user+sys | avg 115MiB |
+
+Default-window stage profiler, five-run average:
+
+| Stage | Result |
+| --- | ---: |
+| total | 516.6ms |
+| provider collection sum | 511.7ms |
+| final filter plus aggregator add | 4.84ms |
+| result materialization and sort | about 8us |
+| candidate files | 3,059 considered, 2,602 skipped, 457 parsed |
+| usage events | 23,766 emitted, 15,710 in selected date range |
+
+Provider contribution in the same run family:
+
+| Provider | Avg collect | Parsed files | Emitted events | In-range events |
+| --- | ---: | ---: | ---: | ---: |
+| Codex | 454.7ms | 372 | 22,573 | 14,715 |
+| Claude | 41.7ms | 70 | 1,014 | 816 |
+| Kimi | 15.3ms | 15 | 179 | 179 |
+| Cursor | no local rows in this run | 0 | 0 | 0 |
+
+Memory observations:
+
+| Metric | Result |
+| --- | ---: |
+| CLI max RSS, default dashboard | about 70-80MiB |
+| scratch profiler `TotalAlloc` delta | about 899MiB |
+| scratch profiler retained heap after run | about 2-12MiB across warm runs |
+
+The high `TotalAlloc` with low retained heap indicates parser allocation churn, not a retained heap leak.
+
+Synthetic benchmark results:
+
+| Benchmark | Result |
+| --- | ---: |
+| `BenchmarkDailyAggregationMaterializedVsStreaming/materialized` | about 10.36ms/op, 25.47MB/op |
+| `BenchmarkDailyAggregationMaterializedVsStreaming/streaming` | about 8.29ms/op, 2.41MB/op |
+| `BenchmarkParseCodexUsageEventsSynthetic` | about 1.75ms/op, 1.72MB/op, 9,716 allocs/op |
+
+Profile highlights from the default-window scratch profiler:
+
+| Profile | Hotspot | Result |
+| --- | --- | ---: |
+| CPU cumulative | `provider.ParseUsageEventsParallel.func1` | 69.78% cum |
+| CPU cumulative | `provider/codex.parseCodexUsageEvents` | 67.54% cum |
+| CPU cumulative | `encoding/json.Unmarshal` | 47.39% cum |
+| alloc_space | `provider/codex.parseCodexUsageEvents` | 778MB, 85.62% cum |
+| alloc_space | `encoding/json.RawMessage.UnmarshalJSON` | 307MB, 33.77% flat |
+| alloc_space | `provider/claude.parseUsageEvents` | 81.7MB, 8.99% cum |
+
+### Interpretation
+
+The optimization target was met for the default `daily` path. The current median default-window result is about 0.49s, compared with the original 5.07s/5.26s baseline. That is roughly a 90% local wall-clock reduction.
+
+The current bottleneck is still provider collection, not daily stats aggregation:
+
+- final filtering plus aggregation is about 5ms on the local dataset
+- provider collection is about 512ms
+- `--all` still costs more because it intentionally bypasses range narrowing and parses full history
+
+Codex dominates total CPU and allocation profiles because it dominates the data volume in this run, not because the available evidence proves Codex has the worst per-event parser cost.
+
+Rough local per-event collect costs from the measured default window:
+
+| Provider | Rough collect cost per emitted event |
+| --- | ---: |
+| Codex | about 20us/event |
+| Claude | about 41us/event |
+| Kimi | about 84us/event |
+
+Rough local allocation cost per emitted event from the profile family:
+
+| Provider | Rough alloc_space per emitted event |
+| --- | ---: |
+| Codex | about 34KB/event |
+| Claude | about 80KB/event |
+| Kimi | about 118KB/event |
+
+These per-event numbers are rough and provider event shapes differ, so they are not portable performance contracts. They do change the follow-up decision: Task 5 should not start from the assumption that Codex parsing is uniquely inefficient. If further performance work is desired, first add a unit-cost benchmark that normalizes by input bytes, log lines, and emitted usage events. Then optimize Codex parsing only if normalized data shows enough headroom or if the product goal is to reduce total runtime for Codex-heavy users.
+
 ## Problems Encountered
 
 - The first invalid provider timing attempt passed `daily --provider codex` as one shell argument. Future timing scripts must pass command arguments explicitly.
@@ -372,4 +576,5 @@ Conditional task decision:
 - Static audit: `workspace/event-token-perf-2026-04-17/agents/codetok-static-audit.md`
 - ccusage reference: `workspace/event-token-perf-2026-04-17/agents/ccusage-reference.md`
 - Runtime profile report: `workspace/event-token-perf-2026-04-17/agents/runtime-profile.md`
+- Post-implementation scratch benchmark: `workspace/event-token-perf-2026-04-17-current/`
 - Existing correctness plan: `docs/plans/2026-04-16-event-based-token-aggregation.md`
