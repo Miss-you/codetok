@@ -1,8 +1,10 @@
 package codex
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -650,6 +652,121 @@ func TestParseCodexUsageEvents_UsesTurnContextModelFallback(t *testing.T) {
 	}
 }
 
+func TestParseCodexUsageEvents_UsesTokenCountInfoModelFallback(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-token-count-info-model.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"info-model-session","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"context":{"model_name":"gpt-5-codex"},"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1: %#v", len(events), events)
+	}
+	if events[0].ModelName != "gpt-5-codex" {
+		t.Errorf("ModelName = %q, want gpt-5-codex", events[0].ModelName)
+	}
+}
+
+func TestParseCodexUsageEvents_UsesModelFromNonUsageEventMessage(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-event-msg-model.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"event-msg-model","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:00:30Z","type":"event_msg","payload":{"type":"agent_reasoning","context":{"model_name":"gpt-5-codex"}}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1: %#v", len(events), events)
+	}
+	if events[0].ModelName != "gpt-5-codex" {
+		t.Errorf("ModelName = %q, want gpt-5-codex", events[0].ModelName)
+	}
+
+	info, err := parseCodexSession(filePath)
+	if err != nil {
+		t.Fatalf("unexpected session parse error: %v", err)
+	}
+	if info.ModelName != "gpt-5-codex" {
+		t.Errorf("session ModelName = %q, want gpt-5-codex", info.ModelName)
+	}
+}
+
+func TestParseCodexUsageEvents_UsesModelFromSkippedTokenCount(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-skipped-token-count-model.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"skipped-token-model","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:00:30Z","type":"event_msg","payload":{"type":"token_count","model":"gpt-5-codex","info":null}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1: %#v", len(events), events)
+	}
+	if events[0].ModelName != "gpt-5-codex" {
+		t.Errorf("ModelName = %q, want gpt-5-codex", events[0].ModelName)
+	}
+
+	info, err := parseCodexSession(filePath)
+	if err != nil {
+		t.Fatalf("unexpected session parse error: %v", err)
+	}
+	if info.ModelName != "gpt-5-codex" {
+		t.Errorf("session ModelName = %q, want gpt-5-codex", info.ModelName)
+	}
+}
+
+func TestParseCodexUsageEvents_UsesModelFromInvalidTokenCountInfo(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "rollout-invalid-token-count-info-model.jsonl")
+	content := `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"invalid-info-model","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:00:30Z","type":"event_msg","payload":{"type":"token_count","info":{"model_name":"gpt-5-codex","total_token_usage":"bad"}}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":10,"output_tokens":20,"total_tokens":120}}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1: %#v", len(events), events)
+	}
+	if events[0].ModelName != "gpt-5-codex" {
+		t.Errorf("ModelName = %q, want gpt-5-codex", events[0].ModelName)
+	}
+
+	info, err := parseCodexSession(filePath)
+	if err != nil {
+		t.Fatalf("unexpected session parse error: %v", err)
+	}
+	if info.ModelName != "gpt-5-codex" {
+		t.Errorf("session ModelName = %q, want gpt-5-codex", info.ModelName)
+	}
+}
+
 func TestCollectCodexUsageEvents_UsesCodexHomeWhenBaseDirEmpty(t *testing.T) {
 	codexHome := t.TempDir()
 	rolloutPath := writeCodexSessionFile(t, filepath.Join(codexHome, "sessions"), "2026", "04", "15", "rollout-home.jsonl", "home-session", "home title")
@@ -766,6 +883,145 @@ func TestCollectCodexUsageEvents_CrossDayDatedLayoutIgnoresFileModTimeForAttribu
 	}
 	if filtered[0].TokenUsage.InputOther != 450 || filtered[0].TokenUsage.InputCacheRead != 50 || filtered[0].TokenUsage.Output != 150 {
 		t.Errorf("filtered usage = %+v, want second event delta only", filtered[0].TokenUsage)
+	}
+}
+
+func TestExtractModelFromRawJSON_AllocationBudgetForNestedTypedFields(t *testing.T) {
+	raw := []byte(`{
+		"limit_name":"rate-limit-tier",
+		"context":{"model_name":"gpt-5-codex"},
+		"info":{"model":"default"},
+		"payload":{"model_id":"fallback-model"}
+	}`)
+
+	if model := extractModelFromRawJSON(raw); model != "gpt-5-codex" {
+		t.Fatalf("model = %q, want gpt-5-codex", model)
+	}
+
+	allocs := testing.AllocsPerRun(100, func() {
+		if model := extractModelFromRawJSON(raw); model != "gpt-5-codex" {
+			t.Fatalf("model = %q, want gpt-5-codex", model)
+		}
+	})
+	if allocs > 10 {
+		t.Fatalf("extractModelFromRawJSON allocs/run = %.1f, want <= 10", allocs)
+	}
+}
+
+func TestExtractModelFromRawJSON_ModelPathParity(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "model", raw: `{"model":"gpt-5-codex"}`, want: "gpt-5-codex"},
+		{name: "model_name", raw: `{"model_name":"gpt-5-codex"}`, want: "gpt-5-codex"},
+		{name: "modelName", raw: `{"modelName":"gpt-5-codex"}`, want: "gpt-5-codex"},
+		{name: "model_id", raw: `{"model_id":"gpt-5-codex"}`, want: "gpt-5-codex"},
+		{name: "modelId", raw: `{"modelId":"gpt-5-codex"}`, want: "gpt-5-codex"},
+		{name: "selected_model", raw: `{"selected_model":"gpt-5-codex"}`, want: "gpt-5-codex"},
+		{name: "default_model", raw: `{"default_model":"gpt-5-codex"}`, want: "gpt-5-codex"},
+		{name: "context_model", raw: `{"context":{"model":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "context_model_name", raw: `{"context":{"model_name":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "context_modelName", raw: `{"context":{"modelName":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "context_model_id", raw: `{"context":{"model_id":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "context_modelId", raw: `{"context":{"modelId":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "info_model", raw: `{"info":{"model":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "info_model_name", raw: `{"info":{"model_name":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "info_modelName", raw: `{"info":{"modelName":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "info_model_id", raw: `{"info":{"model_id":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "info_modelId", raw: `{"info":{"modelId":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "payload_model", raw: `{"payload":{"model":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "payload_model_name", raw: `{"payload":{"model_name":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "payload_modelName", raw: `{"payload":{"modelName":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "payload_model_id", raw: `{"payload":{"model_id":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "payload_modelId", raw: `{"payload":{"modelId":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+		{name: "escaped_model_name_key", raw: `{"model\u005fname":"gpt-5-codex"}`, want: "gpt-5-codex"},
+		{name: "placeholder_falls_through", raw: `{"model":"default","context":{"model_name":"gpt-5-codex"}}`, want: "gpt-5-codex"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractModelFromRawJSON([]byte(tt.raw)); got != tt.want {
+				t.Fatalf("model = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCodexUsageEvents_AllocationBudgetForInfoModelFallback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout-info-model-allocation.jsonl")
+
+	var content strings.Builder
+	content.WriteString(`{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"alloc-session","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}` + "\n")
+	for i := 1; i <= 20; i++ {
+		input := 1000 + i*10
+		cached := 200 + i
+		output := 300 + i
+		fmt.Fprintf(&content, `{"timestamp":"2026-04-15T10:%02d:%02dZ","type":"event_msg","payload":{"type":"token_count","info":{"context":{"model_name":"gpt-5-codex"},"total_token_usage":{"input_tokens":%d,"cached_input_tokens":%d,"output_tokens":%d,"total_tokens":%d}}}}`+"\n", i/60, i%60, input, cached, output, input+output)
+	}
+	if err := os.WriteFile(path, []byte(content.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseCodexUsageEvents(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 20 {
+		t.Fatalf("got %d events, want 20", len(events))
+	}
+	for i, event := range events {
+		if event.ModelName != "gpt-5-codex" {
+			t.Fatalf("event %d ModelName = %q, want gpt-5-codex", i, event.ModelName)
+		}
+	}
+
+	allocs := testing.AllocsPerRun(20, func() {
+		events, err := parseCodexUsageEvents(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(events) != 20 {
+			t.Fatalf("got %d events, want 20", len(events))
+		}
+	})
+	if allocs > 1800 {
+		t.Fatalf("parseCodexUsageEvents allocs/run = %.1f, want <= 1800", allocs)
+	}
+}
+
+func BenchmarkParseCodexUsageEventsSynthetic(b *testing.B) {
+	dir := b.TempDir()
+	path := filepath.Join(dir, "rollout-synthetic.jsonl")
+
+	var content strings.Builder
+	content.WriteString(`{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"synthetic-session","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}` + "\n")
+	content.WriteString(`{"timestamp":"2026-04-15T10:00:01Z","type":"turn_context","payload":{"model":"gpt-5-codex"}}` + "\n")
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&content, `{"timestamp":"2026-04-15T10:%02d:%02dZ","type":"event_msg","payload":{"type":"user_message","message":"question %03d"}}`+"\n", i/60, i%60, i)
+		input := 1000 + i*11
+		cached := 200 + i
+		output := 300 + i*3
+		fmt.Fprintf(&content, `{"timestamp":"2026-04-15T11:%02d:%02dZ","type":"event_msg","payload":{"type":"token_count","info":{"context":{"model_name":"gpt-5-codex"},"total_token_usage":{"input_tokens":%d,"cached_input_tokens":%d,"output_tokens":%d,"total_tokens":%d}}}}`+"\n", i/60, i%60, input, cached, output, input+output)
+	}
+	if err := os.WriteFile(path, []byte(content.String()), 0644); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(content.String())))
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		events, err := parseCodexUsageEvents(path)
+		if err != nil {
+			b.Fatalf("parseCodexUsageEvents returned error: %v", err)
+		}
+		if len(events) != 200 {
+			b.Fatalf("got %d events, want 200", len(events))
+		}
 	}
 }
 
