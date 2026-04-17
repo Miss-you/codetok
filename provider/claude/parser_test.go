@@ -443,6 +443,76 @@ func TestCollectClaudeUsageEvents_IncludesSubagentPaths(t *testing.T) {
 	}
 }
 
+func TestCollectClaudeUsageEventsInRange_SkipsInactiveFilesByModTime(t *testing.T) {
+	baseDir := t.TempDir()
+	projectDir := filepath.Join(baseDir, "project-x")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := writeClaudeUsageFixture(t, projectDir, "old-session.jsonl", "old-session", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC), 100)
+	activePath := writeClaudeUsageFixture(t, projectDir, "active-session.jsonl", "active-session", time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC), 200)
+	oldModTime := time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC)
+	activeModTime := time.Date(2026, 4, 16, 11, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(oldPath, oldModTime, oldModTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(activePath, activeModTime, activeModTime); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 || events[0].SessionID != "active-session" {
+		t.Fatalf("events = %#v, want only active-session", events)
+	}
+	if metrics.ConsideredFiles != 2 || metrics.SkippedFiles != 1 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 1 {
+		t.Fatalf("metrics = %+v, want considered=2 skipped=1 parsed=1 emitted=1", metrics)
+	}
+}
+
+func TestCollectClaudeUsageEventsInRange_KeepsCrossDayFileModifiedAfterUntil(t *testing.T) {
+	baseDir := t.TempDir()
+	projectDir := filepath.Join(baseDir, "project-x")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(projectDir, "cross-day.jsonl")
+	content := `{"type":"assistant","requestId":"req-1","sessionId":"cross-day","timestamp":"2026-04-15T23:55:00Z","message":{"id":"msg-1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"before"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}
+{"type":"assistant","requestId":"req-2","sessionId":"cross-day","timestamp":"2026-04-16T00:05:00Z","message":{"id":"msg-2","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"inside"}],"usage":{"input_tokens":200,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":20}}}
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	afterUntil := time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, afterUntil, afterUntil); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics provider.UsageEventCollectMetrics
+	events, err := (&Provider{}).CollectUsageEventsInRange(baseDir, provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC),
+		Location: time.UTC,
+		Metrics:  &metrics,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want both candidate events before final stats filtering: %#v", len(events), events)
+	}
+	if metrics.ConsideredFiles != 1 || metrics.SkippedFiles != 0 || metrics.ParsedFiles != 1 || metrics.EmittedEvents != 2 {
+		t.Fatalf("metrics = %+v, want considered=1 skipped=0 parsed=1 emitted=2", metrics)
+	}
+}
+
 func TestCollectClaudeUsageEventsWithParser_ParsesInParallelAndSorts(t *testing.T) {
 	paths := []string{"file-c.jsonl", "file-a.jsonl", "bad.jsonl", "file-b.jsonl"}
 	pathToSlug := map[string]string{
@@ -586,6 +656,22 @@ func writeSyntheticClaudeUsageTree(tb testing.TB, baseDir string, projectCount, 
 		}
 	}
 	return totalFiles
+}
+
+func writeClaudeUsageFixture(t *testing.T, dir, name, sessionID string, timestamp time.Time, input int) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	content := fmt.Sprintf(`{"type":"assistant","requestId":"req-%s","sessionId":"%s","timestamp":"%s","message":{"id":"msg-%s","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"fixture"}],"usage":{"input_tokens":%d,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}`+"\n",
+		sessionID,
+		sessionID,
+		timestamp.Format(time.RFC3339),
+		sessionID,
+		input,
+	)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func mustParseTime(t *testing.T, value string) time.Time {

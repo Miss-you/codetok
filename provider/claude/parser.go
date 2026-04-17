@@ -73,12 +73,28 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 // CollectUsageEvents scans baseDir for Claude Code session files and returns timestamped usage events.
 // It uses the same local file discovery semantics as CollectSessions.
 func (p *Provider) CollectUsageEvents(baseDir string) ([]provider.UsageEvent, error) {
+	return p.collectUsageEvents(baseDir, provider.UsageEventCollectOptions{})
+}
+
+func (p *Provider) CollectUsageEventsInRange(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
+	return p.collectUsageEvents(baseDir, opts)
+}
+
+func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
 	paths, pathToSlug, err := collectSessionPaths(baseDir)
 	if err != nil {
 		return nil, err
 	}
 
-	return collectUsageEventsWithParser(paths, pathToSlug, 0, parseUsageEvents), nil
+	paths = filterClaudeUsageEventPaths(paths, opts)
+	if opts.Metrics != nil {
+		opts.Metrics.ParsedFiles += len(paths)
+	}
+	events := collectUsageEventsWithParser(paths, pathToSlug, 0, parseUsageEvents)
+	if opts.Metrics != nil {
+		opts.Metrics.EmittedEvents += len(events)
+	}
+	return events, nil
 }
 
 type claudeUsageEventParser func(path, projectSlug string) ([]provider.UsageEvent, error)
@@ -89,6 +105,36 @@ func collectUsageEventsWithParser(paths []string, pathToSlug map[string]string, 
 	})
 	sortUsageEvents(events)
 	return events
+}
+
+func filterClaudeUsageEventPaths(paths []string, opts provider.UsageEventCollectOptions) []string {
+	if !opts.HasRange() {
+		if opts.Metrics != nil {
+			opts.Metrics.ConsideredFiles += len(paths)
+		}
+		return paths
+	}
+	filtered := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if opts.Metrics != nil {
+			opts.Metrics.ConsideredFiles++
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			if opts.Metrics != nil {
+				opts.Metrics.SkippedFiles++
+			}
+			continue
+		}
+		if opts.ShouldSkipFileByModTime(info.ModTime()) {
+			if opts.Metrics != nil {
+				opts.Metrics.SkippedFiles++
+			}
+			continue
+		}
+		filtered = append(filtered, path)
+	}
+	return filtered
 }
 
 func collectSessionPaths(baseDir string) ([]string, map[string]string, error) {

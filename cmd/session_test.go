@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,137 @@ func TestRunSession_JSONFiltersByUsageEventDate(t *testing.T) {
 	}
 	if got[0].TokenUsage.Total() != 275 {
 		t.Fatalf("total = %d, want only filtered event total 275", got[0].TokenUsage.Total())
+	}
+}
+
+func TestRunSession_ExplicitDateRangeUsesRangeAwareCollector(t *testing.T) {
+	eventProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "codex"},
+		eventErr:            errors.New("full-history collector called"),
+		rangeEvents: []provider.UsageEvent{
+			{
+				ProviderName: "codex",
+				SessionID:    "cross-day-session",
+				Title:        "Cross-day work",
+				Timestamp:    time.Date(2026, 4, 15, 23, 50, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 100},
+			},
+			{
+				ProviderName: "codex",
+				SessionID:    "cross-day-session",
+				Title:        "Cross-day work",
+				Timestamp:    time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC),
+				TokenUsage:   provider.TokenUsage{InputOther: 200, Output: 20},
+			},
+		},
+	}
+	cmd := newSessionTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("since", "2026-04-16"); err != nil {
+		t.Fatalf("setting --since: %v", err)
+	}
+	if err := cmd.Flags().Set("until", "2026-04-16"); err != nil {
+		t.Fatalf("setting --until: %v", err)
+	}
+	if err := cmd.Flags().Set("timezone", "UTC"); err != nil {
+		t.Fatalf("setting --timezone: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runSessionWithProviders(cmd, nil, []provider.Provider{eventProvider}); err != nil {
+			t.Fatalf("runSessionWithProviders returned error: %v", err)
+		}
+	})
+
+	got := decodeSessionJSON(t, output)
+	if len(got) != 1 {
+		t.Fatalf("got %d sessions, want one in-range session: %#v", len(got), got)
+	}
+	if got[0].TokenUsage.Total() != 220 {
+		t.Fatalf("total = %d, want only in-window event total 220", got[0].TokenUsage.Total())
+	}
+	if len(eventProvider.seenEventDirs) != 0 {
+		t.Fatalf("full-history collector should not be called, seen %v", eventProvider.seenEventDirs)
+	}
+	if len(eventProvider.seenRangeOpts) != 1 {
+		t.Fatalf("range opts seen %d times, want 1", len(eventProvider.seenRangeOpts))
+	}
+	wantSince := time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC)
+	wantUntil := time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), time.UTC)
+	gotOpts := eventProvider.seenRangeOpts[0]
+	if !gotOpts.Since.Equal(wantSince) || !gotOpts.Until.Equal(wantUntil) || gotOpts.Location != time.UTC {
+		t.Fatalf("range opts = %+v, want since=%v until=%v UTC", gotOpts, wantSince, wantUntil)
+	}
+}
+
+func TestRunSession_UntilOnlyPassesFullLocalDayToRangeAwareCollector(t *testing.T) {
+	loc := mustLoadLocation(t, "Asia/Shanghai")
+	eventProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "cursor"},
+		eventErr:            errors.New("full-history collector called"),
+		rangeEvents: []provider.UsageEvent{{
+			ProviderName: "cursor",
+			SessionID:    "until-boundary",
+			Timestamp:    time.Date(2026, 4, 16, 23, 30, 0, 0, loc),
+			TokenUsage:   provider.TokenUsage{InputOther: 10},
+		}},
+	}
+	cmd := newSessionTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("until", "2026-04-16"); err != nil {
+		t.Fatalf("setting --until: %v", err)
+	}
+	if err := cmd.Flags().Set("timezone", "Asia/Shanghai"); err != nil {
+		t.Fatalf("setting --timezone: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runSessionWithProviders(cmd, nil, []provider.Provider{eventProvider}); err != nil {
+			t.Fatalf("runSessionWithProviders returned error: %v", err)
+		}
+	})
+	got := decodeSessionJSON(t, output)
+	if len(got) != 1 || got[0].SessionID != "until-boundary" {
+		t.Fatalf("sessions = %#v, want boundary event included", got)
+	}
+	gotOpts := eventProvider.seenRangeOpts[0]
+	wantUntil := time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), loc)
+	if !gotOpts.Since.IsZero() || !gotOpts.Until.Equal(wantUntil) || gotOpts.Location.String() != "Asia/Shanghai" {
+		t.Fatalf("range opts = %+v, want zero since until=%v Asia/Shanghai", gotOpts, wantUntil)
+	}
+}
+
+func TestRunSession_NoDateRangeUsesFullHistoryCollector(t *testing.T) {
+	eventProvider := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "codex"},
+		events: []provider.UsageEvent{{
+			ProviderName: "codex",
+			SessionID:    "full-history",
+			Timestamp:    time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC),
+			TokenUsage:   provider.TokenUsage{InputOther: 10},
+		}},
+		rangeErr: errors.New("range collector should not be called"),
+	}
+	cmd := newSessionTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runSessionWithProviders(cmd, nil, []provider.Provider{eventProvider}); err != nil {
+			t.Fatalf("runSessionWithProviders returned error: %v", err)
+		}
+	})
+	got := decodeSessionJSON(t, output)
+	if len(got) != 1 || got[0].SessionID != "full-history" {
+		t.Fatalf("sessions = %#v, want full-history session", got)
+	}
+	if len(eventProvider.seenRangeDirs) != 0 {
+		t.Fatalf("range collector should not be called without date filters, seen %v", eventProvider.seenRangeDirs)
 	}
 }
 
