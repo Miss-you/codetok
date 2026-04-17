@@ -8,55 +8,80 @@ import (
 	"github.com/miss-you/codetok/provider"
 )
 
-// AggregateEventsByDayWithDimension groups usage events by localized event date and dimension.
-func AggregateEventsByDayWithDimension(events []provider.UsageEvent, dimension AggregateDimension, loc *time.Location) []provider.DailyStats {
-	if len(events) == 0 {
+type dailyEventKey struct {
+	date  string
+	group string
+}
+
+type dailyEventAggregate struct {
+	stats       provider.DailyStats
+	providers   map[string]struct{}
+	sessionKeys map[string]struct{}
+}
+
+// DailyEventAggregator incrementally groups usage events by localized event date and dimension.
+type DailyEventAggregator struct {
+	dimension AggregateDimension
+	loc       *time.Location
+	dayMap    map[dailyEventKey]*dailyEventAggregate
+}
+
+// NewDailyEventAggregator creates an incremental daily usage event aggregator.
+func NewDailyEventAggregator(dimension AggregateDimension, loc *time.Location) *DailyEventAggregator {
+	return &DailyEventAggregator{
+		dimension: normalizeAggregateDimension(dimension),
+		loc:       normalizeEventLocation(loc),
+		dayMap:    make(map[dailyEventKey]*dailyEventAggregate),
+	}
+}
+
+// Add includes one event in the daily aggregate.
+func (a *DailyEventAggregator) Add(e provider.UsageEvent) {
+	if a == nil {
+		return
+	}
+	a.dimension = normalizeAggregateDimension(a.dimension)
+	a.loc = normalizeEventLocation(a.loc)
+	if a.dayMap == nil {
+		a.dayMap = make(map[dailyEventKey]*dailyEventAggregate)
+	}
+	date := e.Timestamp.In(a.loc).Format("2006-01-02")
+	group := eventGroupNameForDimension(e, a.dimension)
+	key := dailyEventKey{date: date, group: group}
+	agg, ok := a.dayMap[key]
+	if !ok {
+		agg = &dailyEventAggregate{
+			stats: provider.DailyStats{
+				Date:    date,
+				GroupBy: string(a.dimension),
+				Group:   group,
+			},
+			providers:   make(map[string]struct{}),
+			sessionKeys: make(map[string]struct{}),
+		}
+		a.dayMap[key] = agg
+	}
+	if providerName := strings.TrimSpace(e.ProviderName); providerName != "" {
+		agg.providers[providerName] = struct{}{}
+	}
+	sessionKey := eventSessionKey(e)
+	if _, ok := agg.sessionKeys[sessionKey]; !ok {
+		agg.sessionKeys[sessionKey] = struct{}{}
+		agg.stats.Sessions++
+	}
+	addTokenUsage(&agg.stats.TokenUsage, e.TokenUsage)
+}
+
+// Results returns sorted daily stats for all events added so far.
+func (a *DailyEventAggregator) Results() []provider.DailyStats {
+	if a == nil || len(a.dayMap) == 0 {
 		return nil
 	}
-	loc = normalizeEventLocation(loc)
-	dimension = normalizeAggregateDimension(dimension)
 
-	type dayKey struct {
-		date  string
-		group string
-	}
-	type dayAggregate struct {
-		stats       provider.DailyStats
-		providers   map[string]struct{}
-		sessionKeys map[string]struct{}
-	}
-	dayMap := make(map[dayKey]*dayAggregate)
-
-	for _, e := range events {
-		date := e.Timestamp.In(loc).Format("2006-01-02")
-		group := eventGroupNameForDimension(e, dimension)
-		key := dayKey{date: date, group: group}
-		agg, ok := dayMap[key]
-		if !ok {
-			agg = &dayAggregate{
-				stats: provider.DailyStats{
-					Date:    date,
-					GroupBy: string(dimension),
-					Group:   group,
-				},
-				providers:   make(map[string]struct{}),
-				sessionKeys: make(map[string]struct{}),
-			}
-			dayMap[key] = agg
-		}
-		if providerName := strings.TrimSpace(e.ProviderName); providerName != "" {
-			agg.providers[providerName] = struct{}{}
-		}
-		sessionKey := eventSessionKey(e)
-		if _, ok := agg.sessionKeys[sessionKey]; !ok {
-			agg.sessionKeys[sessionKey] = struct{}{}
-			agg.stats.Sessions++
-		}
-		addTokenUsage(&agg.stats.TokenUsage, e.TokenUsage)
-	}
-
-	result := make([]provider.DailyStats, 0, len(dayMap))
-	for _, agg := range dayMap {
+	result := make([]provider.DailyStats, 0, len(a.dayMap))
+	for _, agg := range a.dayMap {
+		agg.stats.ProviderName = ""
+		agg.stats.Providers = nil
 		providers := sortedProviderNames(agg.providers)
 		if len(providers) == 1 {
 			agg.stats.ProviderName = providers[0]
@@ -88,28 +113,68 @@ func AggregateEventsByDayWithDimension(events []provider.UsageEvent, dimension A
 	return result
 }
 
+// AggregateEventsByDayWithDimension groups usage events by localized event date and dimension.
+func AggregateEventsByDayWithDimension(events []provider.UsageEvent, dimension AggregateDimension, loc *time.Location) []provider.DailyStats {
+	if len(events) == 0 {
+		return nil
+	}
+	aggregator := NewDailyEventAggregator(dimension, loc)
+	for _, e := range events {
+		aggregator.Add(e)
+	}
+	return aggregator.Results()
+}
+
 // FilterEventsByDateRange returns events whose localized date key falls within [sinceDate, untilDate].
 // Empty sinceDate or untilDate means no bound on that side.
 func FilterEventsByDateRange(events []provider.UsageEvent, sinceDate, untilDate string, loc *time.Location) []provider.UsageEvent {
 	if len(events) == 0 {
 		return nil
 	}
-	loc = normalizeEventLocation(loc)
-	sinceDate = strings.TrimSpace(sinceDate)
-	untilDate = strings.TrimSpace(untilDate)
+	filter := NewEventDateRangeFilter(sinceDate, untilDate, loc)
 
 	filtered := make([]provider.UsageEvent, 0, len(events))
 	for _, e := range events {
-		date := e.Timestamp.In(loc).Format("2006-01-02")
-		if sinceDate != "" && date < sinceDate {
-			continue
+		if filter.Contains(e) {
+			filtered = append(filtered, e)
 		}
-		if untilDate != "" && date > untilDate {
-			continue
-		}
-		filtered = append(filtered, e)
 	}
 	return filtered
+}
+
+// EventDateRangeFilter checks localized event date keys against inclusive bounds.
+type EventDateRangeFilter struct {
+	sinceDate string
+	untilDate string
+	loc       *time.Location
+}
+
+// NewEventDateRangeFilter creates a reusable localized event date filter.
+func NewEventDateRangeFilter(sinceDate, untilDate string, loc *time.Location) EventDateRangeFilter {
+	return EventDateRangeFilter{
+		sinceDate: strings.TrimSpace(sinceDate),
+		untilDate: strings.TrimSpace(untilDate),
+		loc:       normalizeEventLocation(loc),
+	}
+}
+
+// Contains reports whether an event's localized date key falls within the filter bounds.
+func (f EventDateRangeFilter) Contains(e provider.UsageEvent) bool {
+	loc := normalizeEventLocation(f.loc)
+	date := e.Timestamp.In(loc).Format("2006-01-02")
+	if f.sinceDate != "" && date < f.sinceDate {
+		return false
+	}
+	if f.untilDate != "" && date > f.untilDate {
+		return false
+	}
+	return true
+}
+
+// EventInDateRange reports whether an event's localized date key falls within [sinceDate, untilDate].
+// Empty sinceDate or untilDate means no bound on that side.
+func EventInDateRange(e provider.UsageEvent, sinceDate, untilDate string, loc *time.Location) bool {
+	return NewEventDateRangeFilter(sinceDate, untilDate, loc).Contains(e)
 }
 
 func normalizeEventLocation(loc *time.Location) *time.Location {

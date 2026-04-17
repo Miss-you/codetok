@@ -44,12 +44,34 @@ func collectUsageEventsFromProviders(cmd *cobra.Command, providers []provider.Pr
 }
 
 func collectUsageEventsFromProvidersInRange(cmd *cobra.Command, providers []provider.Provider, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
+	var allEvents []provider.UsageEvent
+	err := forEachUsageEventBatchFromProvidersInRange(cmd, providers, opts, func(events []provider.UsageEvent) error {
+		allEvents = append(allEvents, events...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return allEvents, nil
+}
+
+func forEachUsageEventFromProvidersInRange(cmd *cobra.Command, providers []provider.Provider, opts provider.UsageEventCollectOptions, consume func(provider.UsageEvent) error) error {
+	return forEachUsageEventBatchFromProvidersInRange(cmd, providers, opts, func(events []provider.UsageEvent) error {
+		for _, event := range events {
+			if err := consume(event); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func forEachUsageEventBatchFromProvidersInRange(cmd *cobra.Command, providers []provider.Provider, opts provider.UsageEventCollectOptions, consume func([]provider.UsageEvent) error) error {
 	providerFilter, _ := cmd.Flags().GetString("provider")
 	baseDir, _ := cmd.Flags().GetString("base-dir")
 
 	filtered := provider.FilterProviders(providers, providerFilter)
 
-	var allEvents []provider.UsageEvent
 	for _, p := range filtered {
 		dir := baseDir
 		if providerDir, _ := cmd.Flags().GetString(providerDirFlag(p.Name())); providerDir != "" {
@@ -62,9 +84,11 @@ func collectUsageEventsFromProvidersInRange(cmd *cobra.Command, providers []prov
 				if os.IsNotExist(err) {
 					continue
 				}
-				return nil, fmt.Errorf("collecting usage events from %s: %w", p.Name(), err)
+				return fmt.Errorf("collecting usage events from %s: %w", p.Name(), err)
 			}
-			allEvents = append(allEvents, events...)
+			if err := consume(events); err != nil {
+				return fmt.Errorf("processing usage events from %s: %w", p.Name(), err)
+			}
 			continue
 		}
 
@@ -73,10 +97,11 @@ func collectUsageEventsFromProvidersInRange(cmd *cobra.Command, providers []prov
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, fmt.Errorf("collecting sessions for usage events from %s: %w", p.Name(), err)
+			return fmt.Errorf("collecting sessions for usage events from %s: %w", p.Name(), err)
 		}
+		events := make([]provider.UsageEvent, 0, len(sessions))
 		for _, session := range sessions {
-			allEvents = append(allEvents, provider.UsageEvent{
+			events = append(events, provider.UsageEvent{
 				ProviderName: session.ProviderName,
 				ModelName:    session.ModelName,
 				SessionID:    session.SessionID,
@@ -86,9 +111,12 @@ func collectUsageEventsFromProvidersInRange(cmd *cobra.Command, providers []prov
 				TokenUsage:   session.TokenUsage,
 			})
 		}
+		if err := consume(events); err != nil {
+			return fmt.Errorf("processing usage events from %s: %w", p.Name(), err)
+		}
 	}
 
-	return allEvents, nil
+	return nil
 }
 
 func collectProviderUsageEvents(eventProvider provider.UsageEventProvider, dir string, opts provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {

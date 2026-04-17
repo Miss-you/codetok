@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -512,6 +513,220 @@ func TestRunDaily_RangeCandidateEventsAreStillAuthoritativelyFiltered(t *testing
 	}
 }
 
+func TestAggregateDailyUsageEventsFromProvidersInRange_MatchesMaterializedPath(t *testing.T) {
+	loc := mustLoadLocation(t, "UTC")
+	events := []provider.UsageEvent{
+		{
+			ProviderName: "codex",
+			SessionID:    "before",
+			Timestamp:    time.Date(2026, 4, 15, 23, 59, 0, 0, time.UTC),
+			TokenUsage:   provider.TokenUsage{InputOther: 100},
+		},
+		{
+			ProviderName: "codex",
+			SessionID:    "inside-codex",
+			Timestamp:    time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC),
+			TokenUsage:   provider.TokenUsage{InputOther: 200},
+		},
+		{
+			ProviderName: "claude",
+			SessionID:    "inside-claude",
+			Timestamp:    time.Date(2026, 4, 16, 13, 0, 0, 0, time.UTC),
+			TokenUsage:   provider.TokenUsage{InputOther: 300},
+		},
+		{
+			ProviderName: "claude",
+			SessionID:    "after",
+			Timestamp:    time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC),
+			TokenUsage:   provider.TokenUsage{InputOther: 400},
+		},
+	}
+	providers := []provider.Provider{
+		&collectTestUsageEventProvider{
+			collectTestProvider: collectTestProvider{name: "codex"},
+			rangeEvents:         events[:2],
+		},
+		&collectTestUsageEventProvider{
+			collectTestProvider: collectTestProvider{name: "claude"},
+			rangeEvents:         events[2:],
+		},
+	}
+	opts := provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, loc),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), loc),
+		Location: loc,
+	}
+	sinceDate, untilDate := dailyEventFilterDates(opts.Since, opts.Until, loc)
+
+	got, err := aggregateDailyUsageEventsFromProvidersInRange(newDailyTestCommand(), providers, opts, stats.AggregateDimensionCLI, loc, sinceDate, untilDate)
+	if err != nil {
+		t.Fatalf("aggregateDailyUsageEventsFromProvidersInRange returned error: %v", err)
+	}
+
+	filtered := stats.FilterEventsByDateRange(events, sinceDate, untilDate, loc)
+	want := stats.AggregateEventsByDayWithDimension(filtered, stats.AggregateDimensionCLI, loc)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("streamed daily stats = %#v, want materialized stats %#v", got, want)
+	}
+}
+
+func TestAggregateDailyUsageEventsFromProvidersInRange_ReturnsProviderErrorsWithContext(t *testing.T) {
+	boom := errors.New("boom")
+	bad := &collectTestUsageEventProvider{
+		collectTestProvider: collectTestProvider{name: "bad"},
+		rangeErr:            boom,
+	}
+	opts := provider.UsageEventCollectOptions{Since: time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC)}
+
+	_, err := aggregateDailyUsageEventsFromProvidersInRange(newDailyTestCommand(), []provider.Provider{bad}, opts, stats.AggregateDimensionCLI, time.UTC, "2026-04-16", "")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want to wrap boom", err)
+	}
+	if !strings.Contains(err.Error(), "collecting usage events from bad") {
+		t.Fatalf("error = %v, want provider collection context", err)
+	}
+}
+
+func TestRunDaily_JSONUsesStreamingDailyAggregationAndMatchesMaterializedPath(t *testing.T) {
+	loc := mustLoadLocation(t, "UTC")
+	events := []provider.UsageEvent{
+		{
+			ProviderName: "codex",
+			SessionID:    "before",
+			Timestamp:    time.Date(2026, 4, 15, 23, 59, 0, 0, loc),
+			TokenUsage:   provider.TokenUsage{InputOther: 100},
+		},
+		{
+			ProviderName: "codex",
+			SessionID:    "inside-codex",
+			Timestamp:    time.Date(2026, 4, 16, 12, 0, 0, 0, loc),
+			TokenUsage:   provider.TokenUsage{InputOther: 200},
+		},
+		{
+			ProviderName: "claude",
+			SessionID:    "inside-claude",
+			Timestamp:    time.Date(2026, 4, 16, 13, 0, 0, 0, loc),
+			TokenUsage:   provider.TokenUsage{InputOther: 300},
+		},
+		{
+			ProviderName: "claude",
+			SessionID:    "after",
+			Timestamp:    time.Date(2026, 4, 17, 0, 0, 0, 0, loc),
+			TokenUsage:   provider.TokenUsage{InputOther: 400},
+		},
+	}
+	providers := []provider.Provider{
+		&collectTestUsageEventProvider{
+			collectTestProvider: collectTestProvider{name: "codex"},
+			rangeEvents:         events[:2],
+		},
+		&collectTestUsageEventProvider{
+			collectTestProvider: collectTestProvider{name: "claude"},
+			rangeEvents:         events[2:],
+		},
+	}
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("setting --json: %v", err)
+	}
+	if err := cmd.Flags().Set("since", "2026-04-16"); err != nil {
+		t.Fatalf("setting --since: %v", err)
+	}
+	if err := cmd.Flags().Set("until", "2026-04-16"); err != nil {
+		t.Fatalf("setting --until: %v", err)
+	}
+	if err := cmd.Flags().Set("timezone", "UTC"); err != nil {
+		t.Fatalf("setting --timezone: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		if err := runDailyWithProviders(cmd, nil, providers, time.Date(2026, 4, 16, 12, 0, 0, 0, loc)); err != nil {
+			t.Fatalf("runDailyWithProviders returned error: %v", err)
+		}
+	})
+
+	got := decodeDailyJSON(t, output)
+	filtered := stats.FilterEventsByDateRange(events, "2026-04-16", "2026-04-16", loc)
+	want := stats.AggregateEventsByDayWithDimension(filtered, stats.AggregateDimensionCLI, loc)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("daily JSON = %#v, want materialized stats %#v", got, want)
+	}
+}
+
+func TestRunDaily_DashboardUsesStreamingDailyAggregationAndMatchesMaterializedPath(t *testing.T) {
+	loc := mustLoadLocation(t, "UTC")
+	events := []provider.UsageEvent{
+		{
+			ProviderName: "codex",
+			SessionID:    "before",
+			Timestamp:    time.Date(2026, 4, 15, 23, 59, 0, 0, loc),
+			TokenUsage:   provider.TokenUsage{InputOther: 100},
+		},
+		{
+			ProviderName: "codex",
+			SessionID:    "inside-codex",
+			Timestamp:    time.Date(2026, 4, 16, 12, 0, 0, 0, loc),
+			TokenUsage:   provider.TokenUsage{InputOther: 200},
+		},
+		{
+			ProviderName: "claude",
+			SessionID:    "inside-claude",
+			Timestamp:    time.Date(2026, 4, 16, 13, 0, 0, 0, loc),
+			TokenUsage:   provider.TokenUsage{InputOther: 300},
+		},
+		{
+			ProviderName: "claude",
+			SessionID:    "after",
+			Timestamp:    time.Date(2026, 4, 17, 0, 0, 0, 0, loc),
+			TokenUsage:   provider.TokenUsage{InputOther: 400},
+		},
+	}
+	providers := []provider.Provider{
+		&collectTestUsageEventProvider{
+			collectTestProvider: collectTestProvider{name: "codex"},
+			rangeEvents:         events[:2],
+		},
+		&collectTestUsageEventProvider{
+			collectTestProvider: collectTestProvider{name: "claude"},
+			rangeEvents:         events[2:],
+		},
+	}
+	cmd := newDailyTestCommand()
+	if err := cmd.Flags().Set("since", "2026-04-16"); err != nil {
+		t.Fatalf("setting --since: %v", err)
+	}
+	if err := cmd.Flags().Set("until", "2026-04-16"); err != nil {
+		t.Fatalf("setting --until: %v", err)
+	}
+	if err := cmd.Flags().Set("timezone", "UTC"); err != nil {
+		t.Fatalf("setting --timezone: %v", err)
+	}
+	if err := cmd.Flags().Set("unit", "raw"); err != nil {
+		t.Fatalf("setting --unit: %v", err)
+	}
+	if err := cmd.Flags().Set("top", "1"); err != nil {
+		t.Fatalf("setting --top: %v", err)
+	}
+
+	gotOutput := captureStdout(t, func() {
+		if err := runDailyWithProviders(cmd, nil, providers, time.Date(2026, 4, 16, 12, 0, 0, 0, loc)); err != nil {
+			t.Fatalf("runDailyWithProviders returned error: %v", err)
+		}
+	})
+
+	filtered := stats.FilterEventsByDateRange(events, "2026-04-16", "2026-04-16", loc)
+	wantDaily := stats.AggregateEventsByDayWithDimension(filtered, stats.AggregateDimensionCLI, loc)
+	wantOutput := captureStdout(t, func() {
+		printDailyDashboard(wantDaily, tokenUnitRaw, stats.AggregateDimensionCLI, 1)
+	})
+	if gotOutput != wantOutput {
+		t.Fatalf("dashboard output mismatch\n got:\n%s\nwant:\n%s", gotOutput, wantOutput)
+	}
+}
+
 func TestRunDaily_AllUsesFullHistoryCollection(t *testing.T) {
 	eventProvider := &collectTestUsageEventProvider{
 		collectTestProvider: collectTestProvider{name: "codex"},
@@ -882,6 +1097,93 @@ func TestPrintTopGroupShare_RespectsTopN(t *testing.T) {
 	if strings.Contains(output, "codex\t") {
 		t.Fatalf("top=1 should not include second group in share table:\n%s", output)
 	}
+}
+
+type benchmarkDailyUsageEventProvider struct {
+	name   string
+	events []provider.UsageEvent
+}
+
+func (p *benchmarkDailyUsageEventProvider) Name() string {
+	return p.name
+}
+
+func (p *benchmarkDailyUsageEventProvider) CollectSessions(string) ([]provider.SessionInfo, error) {
+	return nil, errors.New("sessions should not be collected")
+}
+
+func (p *benchmarkDailyUsageEventProvider) CollectUsageEvents(string) ([]provider.UsageEvent, error) {
+	return p.events, nil
+}
+
+func (p *benchmarkDailyUsageEventProvider) CollectUsageEventsInRange(string, provider.UsageEventCollectOptions) ([]provider.UsageEvent, error) {
+	return p.events, nil
+}
+
+var benchmarkDailyStats []provider.DailyStats
+
+func BenchmarkDailyAggregationMaterializedVsStreaming(b *testing.B) {
+	loc := time.UTC
+	events := make([]provider.UsageEvent, 0, 50_000)
+	for i := 0; i < cap(events); i++ {
+		timestamp := time.Date(2026, 4, 16, 0, 0, 0, 0, loc).Add(time.Duration(i%48) * time.Hour)
+		providerName := "codex"
+		if i%2 == 1 {
+			providerName = "claude"
+		}
+		events = append(events, provider.UsageEvent{
+			ProviderName: providerName,
+			SessionID:    fmt.Sprintf("%s-session-%d", providerName, i%2000),
+			Timestamp:    timestamp,
+			TokenUsage: provider.TokenUsage{
+				InputOther:       i % 100,
+				Output:           i % 50,
+				InputCacheRead:   i % 30,
+				InputCacheCreate: i % 20,
+			},
+		})
+	}
+	providers := []provider.Provider{
+		&benchmarkDailyUsageEventProvider{name: "codex", events: events[:len(events)/2]},
+		&benchmarkDailyUsageEventProvider{name: "claude", events: events[len(events)/2:]},
+	}
+	opts := provider.UsageEventCollectOptions{
+		Since:    time.Date(2026, 4, 16, 0, 0, 0, 0, loc),
+		Until:    time.Date(2026, 4, 16, 23, 59, 59, int(time.Second-time.Nanosecond), loc),
+		Location: loc,
+	}
+	sinceDate, untilDate := dailyEventFilterDates(opts.Since, opts.Until, loc)
+
+	b.Run("materialized", func(b *testing.B) {
+		cmd := newDailyTestCommand()
+		var result []provider.DailyStats
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			allEvents, err := collectUsageEventsFromProvidersInRange(cmd, providers, opts)
+			if err != nil {
+				b.Fatal(err)
+			}
+			filtered := stats.FilterEventsByDateRange(allEvents, sinceDate, untilDate, loc)
+			result = stats.AggregateEventsByDayWithDimension(filtered, stats.AggregateDimensionCLI, loc)
+		}
+		benchmarkDailyStats = result
+	})
+
+	b.Run("streaming", func(b *testing.B) {
+		cmd := newDailyTestCommand()
+		var result []provider.DailyStats
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			var err error
+			result, err = aggregateDailyUsageEventsFromProvidersInRange(cmd, providers, opts, stats.AggregateDimensionCLI, loc, sinceDate, untilDate)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		benchmarkDailyStats = result
+	})
 }
 
 func assertContainsAll(t *testing.T, text string, values ...string) {
