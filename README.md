@@ -27,13 +27,19 @@ Planned:
 npm install -g @y0usali/codetok
 ```
 
-### From source
+### From Go
 
 ```bash
 go install github.com/miss-you/codetok@latest
 ```
 
 Note: Go module paths are case-sensitive. Use `github.com/miss-you/codetok` exactly (all lowercase).
+
+If a newly published version fails with a `sum.golang.org` verification error, wait a few minutes and retry. As a temporary workaround for that module only:
+
+```bash
+GONOSUMDB=github.com/miss-you/codetok go install github.com/miss-you/codetok@latest
+```
 
 ### Build locally
 
@@ -49,8 +55,9 @@ make build
 Download pre-built binaries from the [Releases](https://github.com/miss-you/codetok/releases) page.
 
 Release automation:
-- Pushing a `v*` tag publishes GitHub release artifacts.
-- The same workflow then publishes the npm package automatically.
+- Pushing a `v*` tag runs release validation, publishes GitHub release artifacts, and publishes the npm package automatically.
+- The workflow smoke-tests the npm tarball before publishing.
+- Public `go install` and npm install checks run after publishing with bounded retries. Go proxy/checksum database propagation delays are reported as non-blocking checks instead of blocking the release.
 - Repository maintainers must configure `NPM_TOKEN` in GitHub Actions secrets.
 
 ## Quick Start

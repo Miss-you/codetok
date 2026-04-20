@@ -8,10 +8,47 @@ on:
 permissions:
   contents: write
 
+env:
+  MODULE_PATH: github.com/miss-you/codetok
+  NPM_PACKAGE: "@y0usali/codetok"
+
 jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Validate tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          if [ "$TAG" = "$VERSION" ]; then
+            echo "Error: release tag '$TAG' must start with v."
+            exit 1
+          fi
+
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+            echo "Error: tag '$TAG' must use vMAJOR.MINOR.PATCH with optional prerelease identifiers."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: go test -race -cover ./...
+
   release:
     name: Release
     runs-on: ubuntu-latest
+    needs: validate
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,7 +66,7 @@ jobs:
   publish-npm:
     name: Publish npm
     runs-on: ubuntu-latest
-    needs: release
+    needs: [validate, release]
     defaults:
       run:
         working-directory: npm
@@ -43,23 +80,174 @@ jobs:
 
       - name: Set npm package version from tag
         env:
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          VERSION="${TAG#v}"
-          if [ -z "$VERSION" ]; then
-            echo "Error: VERSION extracted from tag '$TAG' is empty."
-            exit 1
-          fi
-          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
-            echo "Error: VERSION '$VERSION' extracted from tag '$TAG' is not a valid semver."
-            exit 1
-          fi
           npm pkg set version="$VERSION"
 
       - name: Validate package contents
         run: npm pack --dry-run
 
+      - name: Smoke test npm tarball install
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          PACKAGE_TGZ="$(npm pack --pack-destination "$RUNNER_TEMP" | tail -n 1)"
+          PACKAGE_PATH="$RUNNER_TEMP/$PACKAGE_TGZ"
+          TEST_PREFIX="$(mktemp -d)"
+
+          npm install --prefix "$TEST_PREFIX" "$PACKAGE_PATH"
+          VERSION_OUTPUT="$("$TEST_PREFIX/node_modules/.bin/codetok" version)"
+          echo "$VERSION_OUTPUT"
+
+          case "$VERSION_OUTPUT" in
+            "codetok $VERSION"|"codetok $VERSION "*) ;;
+            *)
+              echo "Error: installed codetok version output did not match expected version $VERSION."
+              exit 1
+              ;;
+          esac
+
       - name: Publish package to npm
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  verify-go-install:
+    name: Verify Go install (public)
+    runs-on: ubuntu-latest
+    needs: [validate, release]
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Smoke test public Go install
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          cleanup_tmp_dir() {
+            chmod -R u+w "$1" 2>/dev/null || true
+            rm -rf "$1" || true
+          }
+
+          install_and_check() {
+            query="$1"
+            tmp_dir="$(mktemp -d)"
+            mkdir -p "$tmp_dir/bin" "$tmp_dir/gopath"
+
+            if ! GOBIN="$tmp_dir/bin" GOPATH="$tmp_dir/gopath" \
+              GOPROXY=https://proxy.golang.org,direct \
+              GOSUMDB=sum.golang.org \
+              go install "$MODULE_PATH@$query"; then
+              cleanup_tmp_dir "$tmp_dir"
+              return 1
+            fi
+
+            version_output="$("$tmp_dir/bin/codetok" version)"
+            echo "$version_output"
+            cleanup_tmp_dir "$tmp_dir"
+
+            if [ "$version_output" = "codetok v$VERSION" ]; then
+              return 0
+            fi
+
+            echo "::warning::Installed Go binary version '$version_output' did not match expected 'codetok v$VERSION'."
+            return 1
+          }
+
+          retry_install() {
+            query="$1"
+            attempts="$2"
+            delay_seconds="$3"
+
+            for attempt in $(seq 1 "$attempts"); do
+              echo "Checking $MODULE_PATH@$query (attempt $attempt/$attempts)"
+              if install_and_check "$query"; then
+                echo "$MODULE_PATH@$query verified."
+                return 0
+              fi
+
+              if [ "$attempt" -lt "$attempts" ]; then
+                sleep "$delay_seconds"
+              fi
+            done
+
+            return 1
+          }
+
+          if ! retry_install "$TAG" 20 60; then
+            echo "::warning::$MODULE_PATH@$TAG is not yet available through proxy.golang.org/sum.golang.org."
+            {
+              echo "## Go install smoke"
+              echo ""
+              echo "$MODULE_PATH@$TAG was not verified within 20 minutes."
+              echo "This usually means proxy.golang.org or sum.golang.org has not indexed the new tag yet."
+              echo "Rerun this job later; the GitHub Release artifacts were already published."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          if echo "$VERSION" | grep -q -- '-'; then
+            echo "Skipping @latest check for prerelease version $VERSION."
+            exit 0
+          fi
+
+          if ! retry_install latest 10 30; then
+            echo "::warning::$MODULE_PATH@latest has not resolved to $VERSION yet."
+            {
+              echo "## Go install smoke"
+              echo ""
+              echo "$MODULE_PATH@$TAG was verified, but @latest did not resolve to $VERSION within 5 minutes."
+              echo "Rerun this job later if @latest propagation matters for the announcement."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+  verify-npm-install:
+    name: Verify npm install (public)
+    runs-on: ubuntu-latest
+    needs: [validate, publish-npm]
+    continue-on-error: true
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Smoke test public npm install
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          for attempt in $(seq 1 10); do
+            TEST_PREFIX="$(mktemp -d)"
+            echo "Checking $NPM_PACKAGE@$VERSION (attempt $attempt/10)"
+
+            if npm install --prefix "$TEST_PREFIX" "$NPM_PACKAGE@$VERSION"; then
+              VERSION_OUTPUT="$("$TEST_PREFIX/node_modules/.bin/codetok" version)"
+              echo "$VERSION_OUTPUT"
+
+              case "$VERSION_OUTPUT" in
+                "codetok $VERSION"|"codetok $VERSION "*) exit 0 ;;
+                *)
+                  echo "::warning::Installed npm binary version '$VERSION_OUTPUT' did not match expected version $VERSION."
+                  ;;
+              esac
+            fi
+
+            rm -rf "$TEST_PREFIX"
+            sleep 30
+          done
+
+          echo "::warning::$NPM_PACKAGE@$VERSION was published but was not installable within 5 minutes."
+          {
+            echo "## npm install smoke"
+            echo ""
+            echo "$NPM_PACKAGE@$VERSION was not verified from the public npm registry within 5 minutes."
+            echo "Rerun this job later if registry propagation is delayed."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
