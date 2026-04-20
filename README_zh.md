@@ -27,13 +27,19 @@
 npm install -g @y0usali/codetok
 ```
 
-### 从源码安装
+### 从 Go 安装
 
 ```bash
 go install github.com/miss-you/codetok@latest
 ```
 
 注意：Go module 路径区分大小写，必须使用全小写 `github.com/miss-you/codetok`。
+
+如果新版本刚发布后遇到 `sum.golang.org` 校验失败，等几分钟后重试即可。临时绕过这个模块的校验可以使用：
+
+```bash
+GONOSUMDB=github.com/miss-you/codetok go install github.com/miss-you/codetok@latest
+```
 
 ### 本地构建
 
@@ -49,8 +55,9 @@ make build
 前往 [Releases](https://github.com/miss-you/codetok/releases) 页面下载。
 
 发布自动化：
-- 推送 `v*` tag 后会发布 GitHub Release 二进制。
-- 同一个 workflow 会继续自动发布 npm 包。
+- 推送 `v*` tag 后会先做发布校验，再发布 GitHub Release 二进制并自动发布 npm 包。
+- workflow 会在 npm 发布前真实安装本地 tarball 做 smoke test。
+- 公开 `go install` 和 npm install 会在发布后做有界重试验证。Go proxy/checksum database 的传播延迟会记录为非阻塞检查，不会阻塞发布。
 - 仓库维护者需要在 GitHub Actions Secrets 中配置 `NPM_TOKEN`。
 
 ## 快速开始
