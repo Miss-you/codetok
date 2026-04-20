@@ -3,7 +3,7 @@
 ## Scope
 - Repository: `miss-you/codetok`
 - Workflow: `.github/workflows/release.yml`
-- npm package: `@y0usali/codetok`
+- npm package: `@yousali/codetok`
 - Release source branch: `main`
 
 ## 1. Confirm merged commit on `main`
@@ -65,9 +65,9 @@ Must include:
 
 ## 6. Verify npm publish and install
 ```bash
-npm view @y0usali/codetok version
-npm view @y0usali/codetok dist-tags --json
-npm i -g @y0usali/codetok@X.Y.Z
+npm view @yousali/codetok version
+npm view @yousali/codetok dist-tags --json
+npm i -g @yousali/codetok@X.Y.Z
 which codetok
 codetok version
 ```
@@ -81,7 +81,7 @@ Pass criteria:
 ```bash
 gh secret list --repo miss-you/codetok
 ```
-- Verify package namespace is `@y0usali/codetok`
+- Verify package namespace is `@yousali/codetok`
 - Rotate token and rerun failed jobs if needed
 
 ### Release succeeded but npm not visible
