@@ -5,7 +5,7 @@ Install the `codetok` CLI through npm.
 ## Install
 
 ```bash
-npm install -g @yousali/codetok
+npm install -g @y0usali/codetok
 ```
 
 ## How it works

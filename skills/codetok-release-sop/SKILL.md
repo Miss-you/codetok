@@ -1,6 +1,6 @@
 ---
 name: codetok-release-sop
-description: Cut and verify codetok releases from merged main commits through GitHub Release and npm publish. Use when asked to prepare a version bump, create/push release tags, monitor release workflow, troubleshoot publish failures, rerun failed jobs, and validate installability of @yousali/codetok.
+description: Cut and verify codetok releases from merged main commits through GitHub Release and npm publish. Use when asked to prepare a version bump, create/push release tags, monitor release workflow, troubleshoot publish failures, rerun failed jobs, and validate installability of @y0usali/codetok.
 ---
 
 # Codetok Release SOP
@@ -9,7 +9,7 @@ description: Cut and verify codetok releases from merged main commits through Gi
 - Release from `main` only.
 - Use semantic version tags in `vX.Y.Z` format.
 - Publish workflow is `.github/workflows/release.yml`.
-- npm package is `@yousali/codetok`.
+- npm package is `@y0usali/codetok`.
 - Use a GitHub identity with repo write access and `gh` authenticated.
 
 ## 1) Confirm Ready-to-Release Commit
@@ -72,9 +72,9 @@ Require:
 
 ## 6) Verify npm Publish and Install
 ```bash
-npm view @yousali/codetok version
-npm view @yousali/codetok dist-tags --json
-npm i -g @yousali/codetok@X.Y.Z
+npm view @y0usali/codetok version
+npm view @y0usali/codetok dist-tags --json
+npm i -g @y0usali/codetok@X.Y.Z
 which codetok
 codetok version
 ```
@@ -90,7 +90,7 @@ Require:
 ```bash
 gh secret list --repo miss-you/codetok
 ```
-- Confirm workflow publishes scoped package `@yousali/codetok`.
+- Confirm workflow publishes scoped package `@y0usali/codetok`.
 - Rotate `NPM_TOKEN` and rerun failed jobs.
 
 ### Release job succeeds but npm package seems unavailable
