@@ -9,7 +9,7 @@ const binPath = path.join(__dirname, '..', 'vendor', binName);
 
 if (!fs.existsSync(binPath)) {
   console.error(
-    '[codetok] native binary is missing. Reinstall with `npm install -g @yousali/codetok`.'
+    '[codetok] native binary is missing. Reinstall with `npm install -g @y0usali/codetok`.'
   );
   process.exit(1);
 }
