@@ -36,7 +36,9 @@ milliseconds since epoch. Event types:
 
 `usageScope` is `turn` for regular LLM requests and `session` for internal calls
 (e.g. compaction); both are summed. The `kimi-code/` model-alias prefix is stripped
-for display (`kimi-code/k3-256k` → `k3-256k`).
+for display (`kimi-code/k3-256k` → `k3-256k`). Model attribution comes from each
+`usage.record`'s `model`; when no record in a wire carries a model, the
+`profile.bind` event's `modelAlias` is the fallback.
 
 ## Package Structure
 

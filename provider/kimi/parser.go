@@ -30,10 +30,11 @@ func (p *Provider) Name() string {
 
 // wireEvent represents a single line in a Kimi Code wire.jsonl file.
 type wireEvent struct {
-	Type   string          `json:"type"`
-	Model  string          `json:"model"`
-	Usage  *wireTokenUsage `json:"usage"`
-	Origin *struct {
+	Type       string          `json:"type"`
+	Model      string          `json:"model"`
+	ModelAlias string          `json:"modelAlias"`
+	Usage      *wireTokenUsage `json:"usage"`
+	Origin     *struct {
 		Kind string `json:"kind"`
 	} `json:"origin"`
 	Time int64 `json:"time"` // milliseconds since epoch
@@ -307,6 +308,7 @@ func parseWireJSONL(path string) (provider.TokenUsage, int, time.Time, time.Time
 	var turns int
 	var startTime, endTime time.Time
 	var modelName string
+	var bindAlias string
 
 	err := scanWireLines(path, func(line []byte, _ int) {
 		var event wireEvent
@@ -325,6 +327,12 @@ func parseWireJSONL(path string) (provider.TokenUsage, int, time.Time, time.Time
 		}
 
 		switch event.Type {
+		case "profile.bind":
+			// Fallback model source for wires whose usage.record lines omit the model.
+			if bindAlias == "" {
+				bindAlias = event.ModelAlias
+			}
+
 		case "usage.record":
 			if event.Usage == nil {
 				return
@@ -348,6 +356,9 @@ func parseWireJSONL(path string) (provider.TokenUsage, int, time.Time, time.Time
 	if err != nil {
 		return provider.TokenUsage{}, 0, time.Time{}, time.Time{}, "", err
 	}
+	if modelName == "" {
+		modelName = bindAlias
+	}
 
 	return usage, turns, startTime, endTime, modelName, nil
 }
@@ -355,10 +366,18 @@ func parseWireJSONL(path string) (provider.TokenUsage, int, time.Time, time.Time
 func parseKimiUsageEvents(wirePath string, baseEvent provider.UsageEvent) ([]provider.UsageEvent, string, error) {
 	var events []provider.UsageEvent
 	var modelName string
+	var bindAlias string
 
 	err := scanWireLines(wirePath, func(line []byte, lineNo int) {
 		var event wireEvent
 		if err := json.Unmarshal(line, &event); err != nil {
+			return
+		}
+		if event.Type == "profile.bind" {
+			// Fallback model source for usage.record lines that omit the model.
+			if bindAlias == "" {
+				bindAlias = event.ModelAlias
+			}
 			return
 		}
 		if event.Type != "usage.record" {
@@ -391,6 +410,9 @@ func parseKimiUsageEvents(wirePath string, baseEvent provider.UsageEvent) ([]pro
 	})
 	if err != nil {
 		return nil, "", err
+	}
+	if modelName == "" {
+		modelName = bindAlias
 	}
 
 	return events, modelName, nil

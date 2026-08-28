@@ -571,3 +571,65 @@ func TestParseWireJSONL_TurnPromptOriginFilter(t *testing.T) {
 		t.Errorf("turns = %d, want 2", turns)
 	}
 }
+
+func TestParseWireJSONL_ProfileBindModelAliasFallback(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"type":"profile.bind","modelAlias":"kimi-code/k3-256k","profileName":"agent","time":1770983424650}
+{"type":"usage.record","usage":{"inputOther":100,"output":50,"inputCacheRead":200,"inputCacheCreation":10},"usageScope":"turn","time":1770983426420}
+`
+	wirePath := filepath.Join(dir, "wire.jsonl")
+	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _, _, modelName, err := parseWireJSONL(wirePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if modelName != "kimi-code/k3-256k" {
+		t.Errorf("modelName = %q, want %q from profile.bind fallback", modelName, "kimi-code/k3-256k")
+	}
+}
+
+func TestCollectKimiUsageEvents_ProfileBindModelAliasFallback(t *testing.T) {
+	baseDir := t.TempDir()
+
+	writeWire := func(sessionID, content string) {
+		wireDir := filepath.Join(baseDir, "wd_a", sessionID, "agents", "main")
+		if err := os.MkdirAll(wireDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wireDir, "wire.jsonl"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// No record carries a model: events fall back to the profile.bind alias.
+	writeWire("session-bind-only", `{"type":"profile.bind","modelAlias":"kimi-code/kimi-for-coding","profileName":"agent","time":1770983424650}
+{"type":"usage.record","usage":{"inputOther":100,"output":50,"inputCacheRead":0,"inputCacheCreation":0},"usageScope":"turn","time":1770983426420}
+`)
+	// A record-level model wins over the profile.bind alias.
+	writeWire("session-record-wins", `{"type":"profile.bind","modelAlias":"kimi-code/kimi-for-coding","profileName":"agent","time":1770983424650}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":1,"output":2,"inputCacheRead":3,"inputCacheCreation":4},"usageScope":"turn","time":1770983430000}
+`)
+
+	p := &Provider{}
+	events, err := p.CollectUsageEvents(baseDir)
+	if err != nil {
+		t.Fatalf("CollectUsageEvents returned error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+
+	bySession := make(map[string]string, len(events))
+	for _, event := range events {
+		bySession[event.SessionID] = event.ModelName
+	}
+	if got := bySession["session-bind-only"]; got != "kimi-for-coding" {
+		t.Errorf("session-bind-only ModelName = %q, want %q from profile.bind fallback", got, "kimi-for-coding")
+	}
+	if got := bySession["session-record-wins"]; got != "k3-256k" {
+		t.Errorf("session-record-wins ModelName = %q, want %q (record model wins over alias)", got, "k3-256k")
+	}
+}
