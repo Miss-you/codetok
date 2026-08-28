@@ -10,7 +10,7 @@ A CLI tool for tracking and aggregating local token usage events across AI codin
 
 Supported providers:
 
-- **Kimi CLI** — parses `~/.kimi/sessions/**/wire.jsonl`
+- **Kimi Code** — parses `~/.kimi-code/sessions/**/agents/*/wire.jsonl`
 - **Claude Code** — parses `~/.claude/projects/**/*.jsonl` (with streaming deduplication)
 - **Codex CLI** — parses `$CODEX_HOME/sessions/**/*.jsonl` when `CODEX_HOME` is set, otherwise `~/.codex/sessions/**/*.jsonl`
 - **Cursor** — parses local Cursor usage export CSVs from `~/.codetok/cursor/*.csv`, `~/.codetok/cursor/imports/**/*.csv`, and `~/.codetok/cursor/synced/**/*.csv`
@@ -194,7 +194,7 @@ Flags:
 | `--timezone` | Timezone for date filters and daily buckets; accepts an IANA name and defaults to local time |
 | `--provider` | Filter by provider name (e.g. `kimi`, `claude`, `codex`) |
 | `--base-dir` | Override default data directory (applies to all providers) |
-| `--kimi-dir` | Override Kimi CLI data directory |
+| `--kimi-dir` | Override Kimi Code data directory |
 | `--claude-dir` | Override Claude Code data directory |
 | `--codex-dir` | Override Codex CLI data directory |
 | `--cursor-dir` | Override Cursor CSV directory; scans only the provided local path |
@@ -250,8 +250,8 @@ Statistics scope:
 - `codetok cursor login`, `status`, and `sync` are the explicit Cursor commands that may contact the remote Cursor API.
 - Sessions are counted only if their local log files currently exist.
 
-**Kimi CLI** — `~/.kimi/sessions/<work-dir-hash>/<session-uuid>/wire.jsonl`
-- Parses `StatusUpdate` events containing `token_usage`
+**Kimi Code** — `~/.kimi-code/sessions/<work-dir>/<session-id>/agents/<agent>/wire.jsonl`
+- Parses `usage.record` events containing per-request `usage`; sums usage across all agents in a session
 
 **Claude Code** — `~/.claude/projects/<project-slug>/<session-uuid>.jsonl`
 - Parses `assistant` events with `message.usage`
@@ -285,7 +285,7 @@ codetok/
 │   ├── registry.go         # Provider auto-registration via init()
 │   ├── parallel.go         # Bounded parallel parsing helper
 │   ├── kimi/
-│   │   └── parser.go       # Kimi CLI wire.jsonl parser
+│   │   └── parser.go       # Kimi Code wire.jsonl parser
 │   ├── claude/
 │   │   └── parser.go       # Claude Code JSONL parser (with dedup)
 │   ├── cursor/

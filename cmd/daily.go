@@ -53,7 +53,7 @@ func init() {
 	dailyCmd.Flags().Int("top", defaultTopN, "Top N groups to show in dashboard share section")
 	dailyCmd.Flags().String("provider", "", "Filter by provider name (e.g. kimi, claude, codex, cursor)")
 	dailyCmd.Flags().String("base-dir", "", "Override default data directory (applies to all providers)")
-	dailyCmd.Flags().String("kimi-dir", "", "Override Kimi data directory")
+	dailyCmd.Flags().String("kimi-dir", "", "Override Kimi Code data directory")
 	dailyCmd.Flags().String("claude-dir", "", "Override Claude Code data directory")
 	dailyCmd.Flags().String("codex-dir", "", "Override Codex CLI data directory")
 	dailyCmd.Flags().String("cursor-dir", "", "Override Cursor CSV directory; scans only this local path and skips default Cursor imports/synced roots")

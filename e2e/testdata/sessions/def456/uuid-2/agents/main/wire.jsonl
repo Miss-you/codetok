@@ -1,0 +1,6 @@
+{"type":"metadata","protocol_version":"1.5","created_at":1771069800000}
+{"type":"turn.prompt","input":[{"type":"text","text":"fix parser"}],"origin":{"kind":"user"},"time":1771069800000}
+{"type":"usage.record","usage":{"inputOther":500,"output":250,"inputCacheRead":1000,"inputCacheCreation":50},"usageScope":"turn","time":1771069810000}
+{"type":"usage.record","usage":{"inputOther":300,"output":150,"inputCacheRead":600,"inputCacheCreation":40},"usageScope":"turn","time":1771069820000}
+{"type":"usage.record","usage":{"inputOther":200,"output":100,"inputCacheRead":400,"inputCacheCreation":20},"usageScope":"turn","time":1771069830000}
+{"type":"turn.ended","turnId":0,"reason":"completed","durationMs":40000,"time":1771069840000}

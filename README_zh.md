@@ -10,7 +10,7 @@
 
 已支持的 Provider：
 
-- **Kimi CLI** — 解析 `~/.kimi/sessions/**/wire.jsonl`
+- **Kimi Code** — 解析 `~/.kimi-code/sessions/**/agents/*/wire.jsonl`
 - **Claude Code** — 解析 `~/.claude/projects/**/*.jsonl`（含流式去重）
 - **Codex CLI** — 设置 `CODEX_HOME` 时解析 `$CODEX_HOME/sessions/**/*.jsonl`，否则解析 `~/.codex/sessions/**/*.jsonl`
 - **Cursor** — 解析 `~/.codetok/cursor/*.csv`、`~/.codetok/cursor/imports/**/*.csv` 和 `~/.codetok/cursor/synced/**/*.csv` 下的本地 Cursor 用量导出文件
@@ -168,7 +168,7 @@ Rank  CLI     Share   Sessions  Total(m)  Input(m)  Output(m)  Cache Read(m)  Ca
 | `--timezone` | 日期筛选和按日分桶使用的时区；接受 IANA 名称，默认使用本地时区 |
 | `--provider` | 按 Provider 筛选（如 `kimi`、`claude`、`codex`） |
 | `--base-dir` | 自定义数据目录（所有 Provider 生效） |
-| `--kimi-dir` | 自定义 Kimi CLI 数据目录 |
+| `--kimi-dir` | 自定义 Kimi Code 数据目录 |
 | `--claude-dir` | 自定义 Claude Code 数据目录 |
 | `--codex-dir` | 自定义 Codex CLI 数据目录 |
 | `--cursor-dir` | 自定义 Cursor CSV 目录；只扫描你提供的本地路径 |
@@ -224,8 +224,8 @@ codetok 读取本地磁盘上的会话数据和用量导出文件。Provider 会
 - `codetok cursor login`、`status`、`sync` 是唯一会显式访问 Cursor 远程 API 的命令。
 - 只有当前本地仍存在日志文件的会话才会被统计。
 
-**Kimi CLI** — `~/.kimi/sessions/<工作目录hash>/<会话UUID>/wire.jsonl`
-- 解析 `StatusUpdate` 事件中的 `token_usage` 字段
+**Kimi Code** — `~/.kimi-code/sessions/<工作目录>/<会话ID>/agents/<agent>/wire.jsonl`
+- 解析 `usage.record` 事件中每次请求的 `usage` 字段；会话内所有 agent 的用量会合并统计
 
 **Claude Code** — `~/.claude/projects/<项目slug>/<会话UUID>.jsonl`
 - 解析 `assistant` 事件中的 `message.usage` 字段
@@ -259,7 +259,7 @@ codetok/
 │   ├── registry.go         # Provider 自动注册（init()）
 │   ├── parallel.go         # 有界并行解析工具
 │   ├── kimi/
-│   │   └── parser.go       # Kimi CLI wire.jsonl 解析器
+│   │   └── parser.go       # Kimi Code wire.jsonl 解析器
 │   ├── claude/
 │   │   └── parser.go       # Claude Code JSONL 解析器（含去重）
 │   ├── cursor/
