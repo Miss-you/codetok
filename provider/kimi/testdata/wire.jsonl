@@ -1,9 +1,9 @@
-{"type": "metadata", "protocol_version": "1.2"}
-{"timestamp": 1770983424.646556, "message": {"type": "TurnBegin", "payload": {"user_input": [{"type": "text", "text": "hello"}]}}}
-{"timestamp": 1770983424.648874, "message": {"type": "StepBegin", "payload": {"n": 1}}}
-{"timestamp": 1770983426.420942, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.024, "token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}, "message_id": "chatcmpl-aaa"}}}
-{"timestamp": 1770983428.181650, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.031, "token_usage": {"input_other": 150, "output": 75, "input_cache_read": 300, "input_cache_creation": 20}, "message_id": "chatcmpl-bbb"}}}
-{"timestamp": 1770983458.818502, "message": {"type": "TurnEnd", "payload": {}}}
-{"timestamp": 1770983749.387520, "message": {"type": "TurnBegin", "payload": {"user_input": [{"type": "text", "text": "thanks"}]}}}
-{"timestamp": 1770983778.107484, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.060, "token_usage": {"input_other": 200, "output": 100, "input_cache_read": 400, "input_cache_creation": 30}, "message_id": "chatcmpl-ccc"}}}
-{"timestamp": 1770983779.790828, "message": {"type": "TurnEnd", "payload": {}}}
+{"type":"metadata","protocol_version":"1.5","created_at":1770983424646}
+{"type":"profile.bind","modelAlias":"kimi-code/k3-256k","profileName":"agent","time":1770983424650}
+{"type":"turn.prompt","input":[{"type":"text","text":"hello"}],"origin":{"kind":"user"},"time":1770983424646}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":100,"output":50,"inputCacheRead":200,"inputCacheCreation":10},"usageScope":"turn","time":1770983426420}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":150,"output":75,"inputCacheRead":300,"inputCacheCreation":20},"usageScope":"turn","time":1770983428181}
+{"type":"turn.ended","turnId":0,"reason":"completed","durationMs":4000,"time":1770983458818}
+{"type":"turn.prompt","input":[{"type":"text","text":"thanks"}],"origin":{"kind":"user"},"time":1770983749387}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":200,"output":100,"inputCacheRead":400,"inputCacheCreation":30},"usageScope":"turn","time":1770983778107}
+{"type":"turn.ended","turnId":1,"reason":"completed","durationMs":3000,"time":1770983779790}

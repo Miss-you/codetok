@@ -41,7 +41,7 @@ func init() {
 	sessionCmd.Flags().String("timezone", "", "Timezone for date filters (IANA name, default: local)")
 	sessionCmd.Flags().String("provider", "", "Filter by provider name (e.g. kimi, claude, codex, cursor)")
 	sessionCmd.Flags().String("base-dir", "", "Override default data directory (applies to all providers)")
-	sessionCmd.Flags().String("kimi-dir", "", "Override Kimi data directory")
+	sessionCmd.Flags().String("kimi-dir", "", "Override Kimi Code data directory")
 	sessionCmd.Flags().String("claude-dir", "", "Override Claude Code data directory")
 	sessionCmd.Flags().String("codex-dir", "", "Override Codex CLI data directory")
 	sessionCmd.Flags().String("cursor-dir", "", "Override Cursor CSV directory; scans only this local path and skips default Cursor imports/synced roots")

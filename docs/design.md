@@ -1,41 +1,42 @@
-# Codetok Kimi CLI Parser — Design Doc
+# Codetok Kimi Code Parser — Design Doc
 
 ## Data Source
 
-Kimi CLI stores session data at `~/.kimi/sessions/<work-dir-hash>/<session-uuid>/`:
-- `metadata.json`: session metadata (session_id, title, wire_mtime)
-- `wire.jsonl`: event stream containing token usage in StatusUpdate events
-- `context.jsonl`: conversation context (not needed for token stats)
+Kimi Code stores session data at `~/.kimi-code/sessions/<work-dir>/<session-id>/`:
+- `state.json`: session metadata (title, createdAt, updatedAt)
+- `agents/<agent>/wire.jsonl`: per-agent event stream containing token usage in `usage.record` events
+  (`main` is the user-facing agent; `agent-N` are subagents — their usage is summed into the session)
 
 ### wire.jsonl Format
 
-Each line is a JSON object. Event types:
-- `metadata` (line 1): `{"type": "metadata", "protocol_version": "1.2"}`
-- `TurnBegin`: `{"timestamp": ..., "message": {"type": "TurnBegin", "payload": {"user_input": [...]}}}`
-- `StatusUpdate`: contains token_usage — **this is what we parse**
-- `TurnEnd`: marks end of a turn
-- Others: `StepBegin`, `ContentPart`, `ToolCall`, `ToolResult`
+Each line is a JSON object with a top-level `type` field and a `time` field in
+milliseconds since epoch. Event types:
+- `metadata` (line 1): `{"type": "metadata", "protocol_version": "1.5", "created_at": ...}`
+- `turn.prompt`: a user prompt begins a turn
+- `usage.record`: contains per-request `usage` — **this is what we parse**
+- `turn.ended`: marks end of a turn
+- Others: `profile.bind`, `context.append_message`, `llm.request`, `llm.tools_snapshot`, ...
 
-### StatusUpdate Payload (key data)
+### usage.record Event (key data)
 
 ```json
 {
-  "timestamp": 1770983426.420942,
-  "message": {
-    "type": "StatusUpdate",
-    "payload": {
-      "context_usage": 0.024,
-      "token_usage": {
-        "input_other": 1562,
-        "output": 66,
-        "input_cache_read": 4864,
-        "input_cache_creation": 0
-      },
-      "message_id": "chatcmpl-xxx"
-    }
-  }
+  "type": "usage.record",
+  "model": "kimi-code/k3-256k",
+  "usage": {
+    "inputOther": 25569,
+    "output": 188,
+    "inputCacheRead": 0,
+    "inputCacheCreation": 0
+  },
+  "usageScope": "turn",
+  "time": 1787806799376
 }
 ```
+
+`usageScope` is `turn` for regular LLM requests and `session` for internal calls
+(e.g. compaction); both are summed. The `kimi-code/` model-alias prefix is stripped
+for display (`kimi-code/k3-256k` → `k3-256k`).
 
 ## Package Structure
 
@@ -49,11 +50,11 @@ codetok/
 ├── provider/
 │   ├── provider.go            # Provider interface + common types
 │   └── kimi/
-│       ├── parser.go          # Kimi wire.jsonl parser
+│       ├── parser.go          # Kimi Code wire.jsonl parser
 │       ├── parser_test.go     # Unit tests
 │       └── testdata/          # Test fixtures
 │           ├── wire.jsonl
-│           └── metadata.json
+│           └── state.json
 ├── stats/
 │   ├── aggregator.go          # Aggregate by day/session
 │   └── aggregator_test.go     # Unit tests
@@ -63,8 +64,10 @@ codetok/
         └── sessions/
             └── abc123/
                 └── uuid-1/
-                    ├── wire.jsonl
-                    └── metadata.json
+                    ├── state.json
+                    └── agents/
+                        └── main/
+                            └── wire.jsonl
 ```
 
 ## Data Models
@@ -89,7 +92,7 @@ type SessionInfo struct {
     StartTime   time.Time
     EndTime     time.Time
     Turns       int
-    TokenUsage  TokenUsage  // aggregated across all StatusUpdate events
+    TokenUsage  TokenUsage  // aggregated across all usage.record events
 }
 
 type DailyStats struct {
@@ -112,11 +115,12 @@ type Provider interface {
    - TestParseWireJSONL_ValidData: parse fixture wire.jsonl, verify correct token counts
    - TestParseWireJSONL_EmptyFile: handle empty wire.jsonl gracefully
    - TestParseWireJSONL_MalformedLine: skip malformed JSON lines without crashing
-   - TestParseWireJSONL_NoStatusUpdate: wire.jsonl with no StatusUpdate events returns zero tokens
-   - TestParseMetadata_ValidData: parse metadata.json, verify session_id and title
-   - TestParseMetadata_MissingFile: handle missing metadata.json gracefully
+   - TestParseWireJSONL_NoUsageRecord: wire.jsonl with no usage.record events returns zero tokens
+   - TestParseSessionState_ValidData: parse state.json, verify title
+   - TestParseSessionState_MissingFile: handle missing state.json gracefully
    - TestCollectSessions_MultipleSessionDirs: scan nested directory structure correctly
-   - TestTimestampExtraction: verify start/end time from TurnBegin/TurnEnd timestamps
+   - TestParseSession_MultiAgentAggregation: sum usage across agents, count only main agent turns
+   - TestTimestampExtraction: verify start/end time from event timestamps
 
 2. **stats/aggregator_test.go**
    - TestAggregateByDay_SingleDay: all sessions on same day

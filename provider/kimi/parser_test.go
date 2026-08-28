@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ func TestParseWireJSONL_ValidData(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 3 StatusUpdate events: (100+150+200, 50+75+100, 200+300+400, 10+20+30)
+	// 3 usage.record events: (100+150+200, 50+75+100, 200+300+400, 10+20+30)
 	if usage.InputOther != 450 {
 		t.Errorf("InputOther = %d, want 450", usage.InputOther)
 	}
@@ -50,8 +51,8 @@ func TestParseWireJSONL_ValidData(t *testing.T) {
 	if !endTime.After(startTime) {
 		t.Error("endTime should be after startTime")
 	}
-	if modelName != "" {
-		t.Errorf("modelName = %q, want empty", modelName)
+	if modelName != "kimi-code/k3-256k" {
+		t.Errorf("modelName = %q, want %q", modelName, "kimi-code/k3-256k")
 	}
 }
 
@@ -76,9 +77,9 @@ func TestParseWireJSONL_EmptyFile(t *testing.T) {
 
 func TestParseWireJSONL_MalformedLine(t *testing.T) {
 	dir := t.TempDir()
-	content := `{"type": "metadata", "protocol_version": "1.2"}
+	content := `{"type":"metadata","protocol_version":"1.5","created_at":1770983424646}
 this is not valid json
-{"timestamp": 1770983426.420942, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.024, "token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}, "message_id": "chatcmpl-aaa"}}}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":100,"output":50,"inputCacheRead":200,"inputCacheCreation":10},"usageScope":"turn","time":1770983426420}
 `
 	wirePath := filepath.Join(dir, "wire.jsonl")
 	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
@@ -89,7 +90,7 @@ this is not valid json
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should have parsed the one valid StatusUpdate
+	// Should have parsed the one valid usage.record
 	if usage.InputOther != 100 {
 		t.Errorf("InputOther = %d, want 100", usage.InputOther)
 	}
@@ -98,11 +99,11 @@ this is not valid json
 	}
 }
 
-func TestParseWireJSONL_NoStatusUpdate(t *testing.T) {
+func TestParseWireJSONL_NoUsageRecord(t *testing.T) {
 	dir := t.TempDir()
-	content := `{"type": "metadata", "protocol_version": "1.2"}
-{"timestamp": 1770983424.646, "message": {"type": "TurnBegin", "payload": {"user_input": []}}}
-{"timestamp": 1770983458.818, "message": {"type": "TurnEnd", "payload": {}}}
+	content := `{"type":"metadata","protocol_version":"1.5","created_at":1770983424646}
+{"type":"turn.prompt","input":[{"type":"text","text":"hi"}],"origin":{"kind":"user"},"time":1770983424646}
+{"type":"turn.ended","turnId":0,"reason":"completed","durationMs":4000,"time":1770983458818}
 `
 	wirePath := filepath.Join(dir, "wire.jsonl")
 	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
@@ -121,24 +122,18 @@ func TestParseWireJSONL_NoStatusUpdate(t *testing.T) {
 	}
 }
 
-func TestParseMetadata_ValidData(t *testing.T) {
-	meta, err := parseMetadata(filepath.Join("testdata", "metadata.json"))
+func TestParseSessionState_ValidData(t *testing.T) {
+	state, err := parseSessionState(filepath.Join("testdata", "state.json"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if meta.SessionID != "test-session-001" {
-		t.Errorf("SessionID = %q, want %q", meta.SessionID, "test-session-001")
-	}
-	if meta.Title != "Test Session Title" {
-		t.Errorf("Title = %q, want %q", meta.Title, "Test Session Title")
-	}
-	if meta.ModelName != "" {
-		t.Errorf("ModelName = %q, want empty", meta.ModelName)
+	if state.Title != "Test Session Title" {
+		t.Errorf("Title = %q, want %q", state.Title, "Test Session Title")
 	}
 }
 
-func TestParseMetadata_MissingFile(t *testing.T) {
-	_, err := parseMetadata(filepath.Join("testdata", "nonexistent.json"))
+func TestParseSessionState_MissingFile(t *testing.T) {
+	_, err := parseSessionState(filepath.Join("testdata", "nonexistent.json"))
 	if err == nil {
 		t.Error("expected error for missing file, got nil")
 	}
@@ -146,37 +141,35 @@ func TestParseMetadata_MissingFile(t *testing.T) {
 
 func TestCollectSessions_MultipleSessionDirs(t *testing.T) {
 	// Create a temporary directory tree:
-	// baseDir/hash1/uuid1/{wire.jsonl, metadata.json}
-	// baseDir/hash1/uuid2/{wire.jsonl, metadata.json}
+	// baseDir/<work-dir>/<session-id>/{state.json, agents/main/wire.jsonl}
 	baseDir := t.TempDir()
 
 	sessions := []struct {
-		hash      string
-		uuid      string
+		workDir   string
 		sessionID string
 		title     string
 	}{
-		{"hashA", "uuid-1", "session-1", "First Session"},
-		{"hashA", "uuid-2", "session-2", "Second Session"},
-		{"hashB", "uuid-3", "session-3", "Third Session"},
+		{"wd_a", "session-1", "First Session"},
+		{"wd_a", "session-2", "Second Session"},
+		{"wd_b", "session-3", "Third Session"},
 	}
 
-	wireContent := `{"type": "metadata", "protocol_version": "1.2"}
-{"timestamp": 1770983424.646, "message": {"type": "TurnBegin", "payload": {"user_input": [{"type": "text", "text": "hi"}]}}}
-{"timestamp": 1770983426.420, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.024, "token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 0}, "message_id": "msg-1"}}}
-{"timestamp": 1770983458.818, "message": {"type": "TurnEnd", "payload": {}}}
+	wireContent := `{"type":"metadata","protocol_version":"1.5","created_at":1770983424646}
+{"type":"turn.prompt","input":[{"type":"text","text":"hi"}],"origin":{"kind":"user"},"time":1770983424646}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":100,"output":50,"inputCacheRead":200,"inputCacheCreation":0},"usageScope":"turn","time":1770983426420}
+{"type":"turn.ended","turnId":0,"reason":"completed","durationMs":4000,"time":1770983458818}
 `
 
 	for _, s := range sessions {
-		dir := filepath.Join(baseDir, s.hash, s.uuid)
+		dir := filepath.Join(baseDir, s.workDir, s.sessionID, "agents", "main")
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "wire.jsonl"), []byte(wireContent), 0644); err != nil {
 			t.Fatal(err)
 		}
-		metaJSON := `{"session_id": "` + s.sessionID + `", "title": "` + s.title + `"}`
-		if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(metaJSON), 0644); err != nil {
+		stateJSON := `{"title": "` + s.title + `"}`
+		if err := os.WriteFile(filepath.Join(baseDir, s.workDir, s.sessionID, "state.json"), []byte(stateJSON), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -201,6 +194,9 @@ func TestCollectSessions_MultipleSessionDirs(t *testing.T) {
 		if s.Turns != 1 {
 			t.Errorf("session %s Turns = %d, want 1", s.SessionID, s.Turns)
 		}
+		if s.ModelName != "k3-256k" {
+			t.Errorf("session %s ModelName = %q, want %q", s.SessionID, s.ModelName, "k3-256k")
+		}
 	}
 	for _, s := range sessions {
 		if !ids[s.sessionID] {
@@ -209,59 +205,86 @@ func TestCollectSessions_MultipleSessionDirs(t *testing.T) {
 	}
 }
 
-func TestTimestampExtraction(t *testing.T) {
-	usage, _, startTime, endTime, _, err := parseWireJSONL(filepath.Join("testdata", "wire.jsonl"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+func TestParseSession_MultiAgentAggregation(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "wd_a", "session-1")
 
-	_ = usage
-
-	// First TurnBegin timestamp: 1770983424.646556
-	expectedStart := time.Unix(1770983424, 646556000)
-	// Last TurnEnd timestamp: 1770983779.790828
-	expectedEnd := time.Unix(1770983779, 790828000)
-
-	// Allow small tolerance for float precision
-	if startTime.Sub(expectedStart).Abs() > time.Millisecond {
-		t.Errorf("startTime = %v, want close to %v", startTime, expectedStart)
-	}
-	if endTime.Sub(expectedEnd).Abs() > time.Millisecond {
-		t.Errorf("endTime = %v, want close to %v", endTime, expectedEnd)
-	}
-}
-
-func TestParseWireJSONL_ModelExtraction(t *testing.T) {
-	dir := t.TempDir()
-	content := `{"type": "metadata", "protocol_version": "1.2"}
-{"timestamp": 1770983424.646, "message": {"type": "TurnBegin", "payload": {"user_input": []}}}
-{"timestamp": 1770983426.420, "message": {"type": "StatusUpdate", "payload": {"model_name":"moonshot-v1-128k","token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}}}}
-{"timestamp": 1770983458.818, "message": {"type": "TurnEnd", "payload": {}}}
+	mainWire := `{"type":"metadata","protocol_version":"1.5","created_at":1770983424646}
+{"type":"turn.prompt","input":[{"type":"text","text":"hi"}],"origin":{"kind":"user"},"time":1770983424646}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":100,"output":50,"inputCacheRead":200,"inputCacheCreation":10},"usageScope":"turn","time":1770983426420}
+{"type":"turn.ended","turnId":0,"reason":"completed","durationMs":4000,"time":1770983458818}
 `
-	wirePath := filepath.Join(dir, "wire.jsonl")
-	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
+	subWire := `{"type":"metadata","protocol_version":"1.5","created_at":1770983425000}
+{"type":"turn.prompt","input":[{"type":"text","text":"sub task"}],"origin":{"kind":"user"},"time":1770983425000}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":40,"output":10,"inputCacheRead":0,"inputCacheCreation":0},"usageScope":"turn","time":1770983430000}
+`
+	for agent, content := range map[string]string{"main": mainWire, "agent-0": subWire} {
+		dir := filepath.Join(sessionDir, "agents", agent)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "wire.jsonl"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "state.json"), []byte(`{"title":"Multi Agent"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, _, _, modelName, err := parseWireJSONL(wirePath)
+	info, err := parseSession(sessionDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if modelName != "moonshot-v1-128k" {
-		t.Errorf("modelName = %q, want %q", modelName, "moonshot-v1-128k")
+
+	if info.TokenUsage.InputOther != 140 {
+		t.Errorf("InputOther = %d, want 140 (main+subagent)", info.TokenUsage.InputOther)
+	}
+	if info.TokenUsage.Output != 60 {
+		t.Errorf("Output = %d, want 60 (main+subagent)", info.TokenUsage.Output)
+	}
+	// Only the main agent's prompts count as turns.
+	if info.Turns != 1 {
+		t.Errorf("Turns = %d, want 1", info.Turns)
+	}
+	if info.Title != "Multi Agent" {
+		t.Errorf("Title = %q, want %q", info.Title, "Multi Agent")
+	}
+	if info.ModelName != "k3-256k" {
+		t.Errorf("ModelName = %q, want %q", info.ModelName, "k3-256k")
+	}
+	if info.SessionID != "session-1" {
+		t.Errorf("SessionID = %q, want %q", info.SessionID, "session-1")
 	}
 }
 
-func TestParseKimiUsageEvents_StatusUpdatesEmitIncrementalEvents(t *testing.T) {
+func TestTimestampExtraction(t *testing.T) {
+	_, _, startTime, endTime, _, err := parseWireJSONL(filepath.Join("testdata", "wire.jsonl"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Earliest event time: 1770983424646 ms (first turn.prompt)
+	expectedStart := time.UnixMilli(1770983424646)
+	// Latest event time: 1770983779790 ms (last turn.ended)
+	expectedEnd := time.UnixMilli(1770983779790)
+
+	if !startTime.Equal(expectedStart) {
+		t.Errorf("startTime = %v, want %v", startTime, expectedStart)
+	}
+	if !endTime.Equal(expectedEnd) {
+		t.Errorf("endTime = %v, want %v", endTime, expectedEnd)
+	}
+}
+
+func TestParseKimiUsageEvents_UsageRecordsEmitIncrementalEvents(t *testing.T) {
 	dir := t.TempDir()
 	firstTimestamp := time.Date(2026, 2, 15, 23, 59, 59, 500000000, time.UTC)
 	secondTimestamp := firstTimestamp.Add(time.Second)
-	content := fmt.Sprintf(`{"type": "metadata", "protocol_version": "1.2"}
-{"timestamp": %.1f, "message": {"type": "StatusUpdate", "payload": {"model_name":"moonshot-v1-128k","message_id":"msg-a","token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}}}}
-{"timestamp": %.1f, "message": {"type": "StatusUpdate", "payload": {"message_id":"msg-b","token_usage": {"input_other": 150, "output": 75, "input_cache_read": 300, "input_cache_creation": 20}}}}
-{"timestamp": 1771027201.5, "message": {"type": "StatusUpdate", "payload": {"context_usage": 0.5}}}
-{"timestamp": %.1f, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 1, "output": 2, "input_cache_read": 3, "input_cache_creation": 4}}}}
-`, float64(firstTimestamp.UnixNano())/1e9, float64(secondTimestamp.UnixNano())/1e9, float64(secondTimestamp.Add(time.Second).UnixNano())/1e9)
+	content := fmt.Sprintf(`{"type":"metadata","protocol_version":"1.5","created_at":%d}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":100,"output":50,"inputCacheRead":200,"inputCacheCreation":10},"usageScope":"turn","time":%d}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":150,"output":75,"inputCacheRead":300,"inputCacheCreation":20},"usageScope":"turn","time":%d}
+{"type":"usage.record","usage":{"inputOther":1,"output":2,"inputCacheRead":3,"inputCacheCreation":4},"usageScope":"turn","time":%d}
+`, firstTimestamp.UnixMilli(), firstTimestamp.UnixMilli(), secondTimestamp.UnixMilli(), secondTimestamp.Add(time.Second).UnixMilli())
 	wirePath := filepath.Join(dir, "wire.jsonl")
 	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -271,7 +294,7 @@ func TestParseKimiUsageEvents_StatusUpdatesEmitIncrementalEvents(t *testing.T) {
 		ProviderName: "kimi",
 		SessionID:    "session-1",
 		Title:        "Session",
-		WorkDirHash:  "hashA",
+		WorkDirHash:  "wd_a",
 	}
 	events, modelName, err := parseKimiUsageEvents(wirePath, baseEvent)
 	if err != nil {
@@ -280,8 +303,8 @@ func TestParseKimiUsageEvents_StatusUpdatesEmitIncrementalEvents(t *testing.T) {
 	if len(events) != 3 {
 		t.Fatalf("got %d events, want 3", len(events))
 	}
-	if modelName != "moonshot-v1-128k" {
-		t.Fatalf("modelName = %q, want %q", modelName, "moonshot-v1-128k")
+	if modelName != "kimi-code/k3-256k" {
+		t.Fatalf("modelName = %q, want %q", modelName, "kimi-code/k3-256k")
 	}
 
 	if got, want := events[0].Timestamp, firstTimestamp; !got.Equal(want) {
@@ -303,17 +326,18 @@ func TestParseKimiUsageEvents_StatusUpdatesEmitIncrementalEvents(t *testing.T) {
 	if events[2].TokenUsage.InputOther != 1 || events[2].TokenUsage.Output != 2 || events[2].TokenUsage.InputCacheRead != 3 || events[2].TokenUsage.InputCacheCreate != 4 {
 		t.Fatalf("third TokenUsage = %+v, want line-local usage", events[2].TokenUsage)
 	}
-	if events[0].EventID != wirePath+"#msg-a" {
-		t.Fatalf("first EventID = %q, want %q", events[0].EventID, wirePath+"#msg-a")
+	if events[0].EventID != wirePath+":2" {
+		t.Fatalf("first EventID = %q, want %q", events[0].EventID, wirePath+":2")
 	}
-	if events[1].EventID != wirePath+"#msg-b" {
-		t.Fatalf("second EventID = %q, want %q", events[1].EventID, wirePath+"#msg-b")
+	if events[0].ModelName != "k3-256k" {
+		t.Fatalf("first ModelName = %q, want %q", events[0].ModelName, "k3-256k")
 	}
-	if events[2].EventID != wirePath+":5" {
-		t.Fatalf("third EventID = %q, want %q", events[2].EventID, wirePath+":5")
+	// The record without a model falls back to the file-level model.
+	if events[2].ModelName != "" {
+		t.Fatalf("third ModelName = %q, want empty (fallback happens in parseSessionUsageEvents)", events[2].ModelName)
 	}
 	for i, event := range events {
-		if event.ProviderName != "kimi" || event.SessionID != "session-1" || event.Title != "Session" || event.WorkDirHash != "hashA" {
+		if event.ProviderName != "kimi" || event.SessionID != "session-1" || event.Title != "Session" || event.WorkDirHash != "wd_a" {
 			t.Fatalf("event %d metadata = %+v, want base metadata preserved", i, event)
 		}
 		if event.SourcePath != wirePath {
@@ -322,122 +346,21 @@ func TestParseKimiUsageEvents_StatusUpdatesEmitIncrementalEvents(t *testing.T) {
 	}
 }
 
-func TestCollectKimiUsageEvents_WireModelWinsOverLogFallback(t *testing.T) {
-	rootDir := t.TempDir()
-	baseDir := filepath.Join(rootDir, "sessions")
-	logsDir := filepath.Join(rootDir, "logs")
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	sessionID := "11111111-2222-3333-4444-555555555555"
-	logContent := `2026-02-20T10:00:00Z INFO Created new session: ` + sessionID + `
-2026-02-20T10:00:01Z INFO Using LLM model: provider='moonshot' model='K2.5'
-`
-	if err := os.WriteFile(filepath.Join(logsDir, "kimi-main.log"), []byte(logContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	sessionDir := filepath.Join(baseDir, "hashA", sessionID)
-	if err := os.MkdirAll(sessionDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	wireContent := `{"timestamp": 1770983426.420, "message": {"type": "StatusUpdate", "payload": {"model_name":"moonshot-v1-128k","token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}}}}
-`
-	if err := os.WriteFile(filepath.Join(sessionDir, "wire.jsonl"), []byte(wireContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-	metaContent := `{"session_id":"` + sessionID + `","title":"Session Without Model"}`
-	if err := os.WriteFile(filepath.Join(sessionDir, "metadata.json"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	p := &Provider{}
-	events, err := p.CollectUsageEvents(baseDir)
-	if err != nil {
-		t.Fatalf("CollectUsageEvents returned error: %v", err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("got %d events, want 1", len(events))
-	}
-	if events[0].ModelName != "moonshot-v1-128k" {
-		t.Fatalf("ModelName = %q, want wire payload model %q", events[0].ModelName, "moonshot-v1-128k")
-	}
-}
-
-func TestCollectKimiUsageEvents_MetadataAndLogFallback(t *testing.T) {
-	rootDir := t.TempDir()
-	baseDir := filepath.Join(rootDir, "sessions")
-	logsDir := filepath.Join(rootDir, "logs")
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	sessionID := "11111111-2222-3333-4444-555555555555"
-	logContent := `2026-02-20T10:00:00Z INFO Created new session: ` + sessionID + `
-2026-02-20T10:00:01Z INFO Using LLM model: provider='moonshot' model='K2.5'
-`
-	if err := os.WriteFile(filepath.Join(logsDir, "kimi-main.log"), []byte(logContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	sessionDir := filepath.Join(baseDir, "hashA", sessionID)
-	if err := os.MkdirAll(sessionDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	wireContent := `{"timestamp": 1770983426.420, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}}}}
-`
-	if err := os.WriteFile(filepath.Join(sessionDir, "wire.jsonl"), []byte(wireContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-	metaContent := `{"session_id":"` + sessionID + `","title":"Session Without Model"}`
-	if err := os.WriteFile(filepath.Join(sessionDir, "metadata.json"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	p := &Provider{}
-	events, err := p.CollectUsageEvents(baseDir)
-	if err != nil {
-		t.Fatalf("CollectUsageEvents returned error: %v", err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("got %d events, want 1", len(events))
-	}
-	event := events[0]
-	if event.ProviderName != "kimi" {
-		t.Fatalf("ProviderName = %q, want %q", event.ProviderName, "kimi")
-	}
-	if event.SessionID != sessionID {
-		t.Fatalf("SessionID = %q, want %q", event.SessionID, sessionID)
-	}
-	if event.Title != "Session Without Model" {
-		t.Fatalf("Title = %q, want %q", event.Title, "Session Without Model")
-	}
-	if event.WorkDirHash != "hashA" {
-		t.Fatalf("WorkDirHash = %q, want %q", event.WorkDirHash, "hashA")
-	}
-	if event.ModelName != "kimi-k2.5" {
-		t.Fatalf("ModelName = %q, want %q", event.ModelName, "kimi-k2.5")
-	}
-	if event.TokenUsage.InputOther != 100 || event.TokenUsage.Output != 50 || event.TokenUsage.InputCacheRead != 200 || event.TokenUsage.InputCacheCreate != 10 {
-		t.Fatalf("TokenUsage = %+v, want wire token usage", event.TokenUsage)
-	}
-}
-
-func TestCollectKimiUsageEvents_MetadataModelWinsOverWireModel(t *testing.T) {
+func TestCollectKimiUsageEvents_MultiAgentSessions(t *testing.T) {
 	baseDir := t.TempDir()
-	sessionDir := filepath.Join(baseDir, "hashA", "uuid-1")
-	if err := os.MkdirAll(sessionDir, 0755); err != nil {
-		t.Fatal(err)
-	}
+	sessionDir := filepath.Join(baseDir, "wd_a", "session-1")
 
-	wireContent := `{"timestamp": 1770983426.420, "message": {"type": "StatusUpdate", "payload": {"model_name":"moonshot-v1-128k","token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}}}}
-`
-	if err := os.WriteFile(filepath.Join(sessionDir, "wire.jsonl"), []byte(wireContent), 0644); err != nil {
-		t.Fatal(err)
+	for agent, input := range map[string]int{"main": 100, "agent-0": 40} {
+		dir := filepath.Join(sessionDir, "agents", agent)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := fmt.Sprintf(`{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":%d,"output":10,"inputCacheRead":0,"inputCacheCreation":0},"usageScope":"turn","time":1776297300000}`+"\n", input)
+		if err := os.WriteFile(filepath.Join(dir, "wire.jsonl"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	metaContent := `{"session_id":"session-1","title":"Session","model_name":"K2.5"}`
-	if err := os.WriteFile(filepath.Join(sessionDir, "metadata.json"), []byte(metaContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(sessionDir, "state.json"), []byte(`{"title":"Multi Agent"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -446,11 +369,57 @@ func TestCollectKimiUsageEvents_MetadataModelWinsOverWireModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CollectUsageEvents returned error: %v", err)
 	}
-	if len(events) != 1 {
-		t.Fatalf("got %d events, want 1", len(events))
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
 	}
-	if events[0].ModelName != "kimi-k2.5" {
-		t.Fatalf("ModelName = %q, want metadata model %q", events[0].ModelName, "kimi-k2.5")
+
+	totalInput := 0
+	for _, event := range events {
+		if event.SessionID != "session-1" {
+			t.Fatalf("SessionID = %q, want %q", event.SessionID, "session-1")
+		}
+		if event.Title != "Multi Agent" {
+			t.Fatalf("Title = %q, want %q", event.Title, "Multi Agent")
+		}
+		if event.ModelName != "k3-256k" {
+			t.Fatalf("ModelName = %q, want %q", event.ModelName, "k3-256k")
+		}
+		if event.WorkDirHash != "wd_a" {
+			t.Fatalf("WorkDirHash = %q, want %q", event.WorkDirHash, "wd_a")
+		}
+		totalInput += event.TokenUsage.InputOther
+	}
+	if totalInput != 140 {
+		t.Fatalf("total InputOther = %d, want 140 (main+subagent)", totalInput)
+	}
+}
+
+func TestCollectKimiUsageEvents_RecordWithoutModelUsesFileModel(t *testing.T) {
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "wd_a", "session-1")
+	wireDir := filepath.Join(sessionDir, "agents", "main")
+	if err := os.MkdirAll(wireDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	wireContent := `{"type":"usage.record","model":"kimi-code/kimi-for-coding","usage":{"inputOther":100,"output":50,"inputCacheRead":200,"inputCacheCreation":10},"usageScope":"turn","time":1776297300000}
+{"type":"usage.record","usage":{"inputOther":1,"output":2,"inputCacheRead":3,"inputCacheCreation":4},"usageScope":"session","time":1776297900000}
+`
+	if err := os.WriteFile(filepath.Join(wireDir, "wire.jsonl"), []byte(wireContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Provider{}
+	events, err := p.CollectUsageEvents(baseDir)
+	if err != nil {
+		t.Fatalf("CollectUsageEvents returned error: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+	for i, event := range events {
+		if event.ModelName != "kimi-for-coding" {
+			t.Fatalf("event %d ModelName = %q, want %q", i, event.ModelName, "kimi-for-coding")
+		}
 	}
 }
 
@@ -510,55 +479,26 @@ func TestCollectKimiUsageEventsInRange_KeepsSessionModifiedAfterUntil(t *testing
 	}
 }
 
-func writeKimiUsageSession(t *testing.T, baseDir, workDirHash, sessionID string, timestamp time.Time, input int) string {
+func writeKimiUsageSession(t *testing.T, baseDir, workDirName, sessionID string, timestamp time.Time, input int) string {
 	t.Helper()
-	sessionDir := filepath.Join(baseDir, workDirHash, sessionID)
-	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+	sessionDir := filepath.Join(baseDir, workDirName, sessionID)
+	wireDir := filepath.Join(sessionDir, "agents", "main")
+	if err := os.MkdirAll(wireDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	metadata := fmt.Sprintf(`{"session_id":"%s","title":"%s","model":"kimi-k2"}`, sessionID, sessionID)
-	if err := os.WriteFile(filepath.Join(sessionDir, "metadata.json"), []byte(metadata), 0644); err != nil {
+	state := fmt.Sprintf(`{"title":"%s"}`, sessionID)
+	if err := os.WriteFile(filepath.Join(sessionDir, "state.json"), []byte(state), 0644); err != nil {
 		t.Fatal(err)
 	}
-	wirePath := filepath.Join(sessionDir, "wire.jsonl")
-	content := fmt.Sprintf(`{"timestamp":%.0f,"message":{"type":"StatusUpdate","payload":{"model":"kimi-k2","message_id":"msg-%s","token_usage":{"input_other":%d,"output":10,"input_cache_read":0,"input_cache_creation":0}}}}`+"\n",
-		float64(timestamp.Unix()),
-		sessionID,
+	wirePath := filepath.Join(wireDir, "wire.jsonl")
+	content := fmt.Sprintf(`{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":%d,"output":10,"inputCacheRead":0,"inputCacheCreation":0},"usageScope":"turn","time":%d}`+"\n",
 		input,
+		timestamp.UnixMilli(),
 	)
 	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return wirePath
-}
-
-func TestParseSession_MetadataModelFallback(t *testing.T) {
-	baseDir := t.TempDir()
-	sessionDir := filepath.Join(baseDir, "hashA", "uuid-1")
-	if err := os.MkdirAll(sessionDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	wireContent := `{"type": "metadata", "protocol_version": "1.2"}
-{"timestamp": 1770983424.646, "message": {"type": "TurnBegin", "payload": {"user_input": []}}}
-{"timestamp": 1770983458.818, "message": {"type": "TurnEnd", "payload": {}}}
-`
-	if err := os.WriteFile(filepath.Join(sessionDir, "wire.jsonl"), []byte(wireContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	metaJSON := `{"session_id":"session-1","title":"Session","model_name":"moonshot-v1-32k"}`
-	if err := os.WriteFile(filepath.Join(sessionDir, "metadata.json"), []byte(metaJSON), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	info, err := parseSession(sessionDir, "hashA", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if info.ModelName != "moonshot-v1-32k" {
-		t.Errorf("ModelName = %q, want %q", info.ModelName, "moonshot-v1-32k")
-	}
 }
 
 func TestNormalizeKimiModelName(t *testing.T) {
@@ -567,11 +507,11 @@ func TestNormalizeKimiModelName(t *testing.T) {
 		in   string
 		want string
 	}{
-		{name: "k2.5 short alias", in: "k2.5", want: "kimi-k2.5"},
-		{name: "k2.5 mixed case", in: " K2.5 ", want: "kimi-k2.5"},
-		{name: "k2-thinking short alias", in: "k2_thinking", want: "kimi-k2-thinking"},
-		{name: "k2-thinking canonical", in: "KIMI-K2-THINKING", want: "kimi-k2-thinking"},
-		{name: "unknown model unchanged", in: "moonshot-v1-32k", want: "moonshot-v1-32k"},
+		{name: "kimi code profile alias", in: "kimi-code/k3-256k", want: "k3-256k"},
+		{name: "kimi code default model", in: "kimi-code/kimi-for-coding", want: "kimi-for-coding"},
+		{name: "whitespace trimmed", in: " kimi-code/k3-256k ", want: "k3-256k"},
+		{name: "other namespace unchanged", in: "openai/gpt-5", want: "openai/gpt-5"},
+		{name: "plain model unchanged", in: "k3-256k", want: "k3-256k"},
 		{name: "empty model", in: "   ", want: ""},
 	}
 
@@ -585,113 +525,49 @@ func TestNormalizeKimiModelName(t *testing.T) {
 	}
 }
 
-func TestModelNameFromLogLine_Variants(t *testing.T) {
-	tests := []struct {
-		name string
-		line string
-		want string
-	}{
-		{
-			name: "single quote fields",
-			line: "2026-02-20T10:00:01Z INFO Using LLM model: provider='moonshot' model='K2.5'",
-			want: "K2.5",
-		},
-		{
-			name: "double quote fields with spacing",
-			line: "2026-02-20T10:00:01Z INFO Using LLM model : provider = \"moonshot\"   model_name = \"kimi-k2-thinking\"",
-			want: "kimi-k2-thinking",
-		},
-		{
-			name: "upper case marker",
-			line: "2026-02-20T10:00:01Z INFO USING LLM MODEL: provider='moonshot' model_id='k2.5'",
-			want: "k2.5",
-		},
-		{
-			name: "non marker line",
-			line: "2026-02-20T10:00:01Z INFO model='k2.5'",
-			want: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := modelNameFromLogLine(tt.line)
-			if got != tt.want {
-				t.Fatalf("modelNameFromLogLine(%q) = %q, want %q", tt.line, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestMergeSessionModelsFromLog_UsesLatestModelForSession(t *testing.T) {
+func TestParseWireJSONL_LongLines(t *testing.T) {
+	// profile.bind embeds the full system prompt and can exceed 1MB; the parser
+	// must not stop at such lines.
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "kimi-main.log")
-	sessionID := "11111111-2222-3333-4444-555555555555"
-	content := `2026-02-20T10:00:00Z INFO Created new session: ` + sessionID + `
-2026-02-20T10:00:01Z INFO Using LLM model: provider='moonshot' model='K2.5'
-2026-02-20T10:00:02Z INFO Using LLM model: provider='moonshot' model='k2-thinking'
-`
-	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+	longPrompt := strings.Repeat("x", 2*1024*1024)
+	content := `{"type":"profile.bind","modelAlias":"kimi-code/k3-256k","profileName":"agent","systemPrompt":"` + longPrompt + `","time":1770983424650}` + "\n" +
+		`{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":100,"output":50,"inputCacheRead":200,"inputCacheCreation":10},"usageScope":"turn","time":1770983426420}` + "\n"
+	wirePath := filepath.Join(dir, "wire.jsonl")
+	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	sessionModelIndex := make(map[string]string)
-	mergeSessionModelsFromLog(logPath, sessionModelIndex)
-
-	got, exists := sessionModelIndex[normalizeSessionIDForLookup(sessionID)]
-	if !exists {
-		t.Fatalf("missing sessionID mapping for %q", sessionID)
+	usage, _, _, _, modelName, err := parseWireJSONL(wirePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "kimi-k2-thinking" {
-		t.Fatalf("model mapping = %q, want %q", got, "kimi-k2-thinking")
+	if usage.InputOther != 100 {
+		t.Errorf("InputOther = %d, want 100", usage.InputOther)
+	}
+	if modelName != "kimi-code/k3-256k" {
+		t.Errorf("modelName = %q, want %q", modelName, "kimi-code/k3-256k")
 	}
 }
 
-func TestCollectSessions_ModelFallbackFromLogs(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-
-	logsDir := filepath.Join(homeDir, ".kimi", "logs")
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	sessionID := "11111111-2222-3333-4444-555555555555"
-	logContent := `2026-02-20T10:00:00Z INFO Created new session: ` + sessionID + `
-2026-02-20T10:00:01Z INFO Using LLM model: provider='moonshot' model='K2.5'
+func TestParseWireJSONL_TurnPromptOriginFilter(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"type":"turn.prompt","input":[{"type":"text","text":"hi"}],"origin":{"kind":"user"},"time":1770983424646}
+{"type":"turn.prompt","input":[],"origin":{"kind":"system_trigger","name":"goal_continuation"},"time":1770983430000}
+{"type":"turn.prompt","input":[],"origin":{"kind":"retry"},"time":1770983435000}
+{"type":"turn.prompt","input":[{"type":"text","text":"legacy"}],"time":1770983440000}
+{"type":"turn.ended","turnId":0,"reason":"completed","time":1770983458818}
 `
-	if err := os.WriteFile(filepath.Join(logsDir, "kimi-main.log"), []byte(logContent), 0644); err != nil {
+	wirePath := filepath.Join(dir, "wire.jsonl")
+	if err := os.WriteFile(wirePath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	baseDir := filepath.Join(homeDir, ".kimi", "sessions")
-	sessionDir := filepath.Join(baseDir, "hashA", sessionID)
-	if err := os.MkdirAll(sessionDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	wireContent := `{"timestamp": 1770983424.646, "message": {"type": "TurnBegin", "payload": {"user_input": []}}}
-{"timestamp": 1770983426.420, "message": {"type": "StatusUpdate", "payload": {"token_usage": {"input_other": 100, "output": 50, "input_cache_read": 200, "input_cache_creation": 10}}}}
-{"timestamp": 1770983458.818, "message": {"type": "TurnEnd", "payload": {}}}
-`
-	if err := os.WriteFile(filepath.Join(sessionDir, "wire.jsonl"), []byte(wireContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	metaContent := `{"session_id":"` + sessionID + `","title":"Session Without Model"}`
-	if err := os.WriteFile(filepath.Join(sessionDir, "metadata.json"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	p := &Provider{}
-	sessions, err := p.CollectSessions(baseDir)
+	_, turns, _, _, _, err := parseWireJSONL(wirePath)
 	if err != nil {
-		t.Fatalf("CollectSessions returned error: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(sessions) != 1 {
-		t.Fatalf("got %d sessions, want 1", len(sessions))
-	}
-	if sessions[0].ModelName != "kimi-k2.5" {
-		t.Fatalf("ModelName = %q, want %q", sessions[0].ModelName, "kimi-k2.5")
+	// user prompt + legacy prompt without origin count; system_trigger and retry do not.
+	if turns != 2 {
+		t.Errorf("turns = %d, want 2", turns)
 	}
 }

@@ -1,0 +1,8 @@
+{"type":"metadata","protocol_version":"1.5","created_at":1770983400000}
+{"type":"turn.prompt","input":[{"type":"text","text":"hello"}],"origin":{"kind":"user"},"time":1770983400000}
+{"type":"usage.record","usage":{"inputOther":100,"output":50,"inputCacheRead":200,"inputCacheCreation":10},"usageScope":"turn","time":1770983410000}
+{"type":"usage.record","usage":{"inputOther":150,"output":75,"inputCacheRead":300,"inputCacheCreation":20},"usageScope":"turn","time":1770983420000}
+{"type":"turn.ended","turnId":0,"reason":"completed","durationMs":30000,"time":1770983430000}
+{"type":"turn.prompt","input":[{"type":"text","text":"continue"}],"origin":{"kind":"user"},"time":1770983440000}
+{"type":"usage.record","usage":{"inputOther":200,"output":100,"inputCacheRead":400,"inputCacheCreation":30},"usageScope":"turn","time":1770983450000}
+{"type":"turn.ended","turnId":1,"reason":"completed","durationMs":20000,"time":1770983460000}

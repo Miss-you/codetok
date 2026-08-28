@@ -1,0 +1,5 @@
+{"type":"metadata","protocol_version":"1.5","created_at":1776297300000}
+{"type":"turn.prompt","input":[{"type":"text","text":"cross day"}],"origin":{"kind":"user"},"time":1776297300000}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":100,"output":50,"inputCacheRead":200,"inputCacheCreation":10},"usageScope":"turn","time":1776297300000}
+{"type":"usage.record","model":"kimi-code/k3-256k","usage":{"inputOther":150,"output":75,"inputCacheRead":300,"inputCacheCreation":20},"usageScope":"turn","time":1776297900000}
+{"type":"turn.ended","turnId":0,"reason":"completed","durationMs":600000,"time":1776297900000}

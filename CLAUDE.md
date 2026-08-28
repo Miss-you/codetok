@@ -59,7 +59,7 @@ When validating CLI changes with `./bin/codetok`, always run `make build` first 
 ### Data Flow
 
 ```
-~/.kimi/sessions/**/wire.jsonl           → kimi.Provider.CollectSessions()
+~/.kimi-code/sessions/**/agents/*/wire.jsonl → kimi.Provider.CollectSessions()
 ~/.claude/projects/**/*.jsonl            → claude.Provider.CollectSessions()  (with dedup)
 ~/.codex/sessions/**/*.jsonl             → codex.Provider.CollectSessions()
     ↓ (all parsed in parallel via ParseParallel)
