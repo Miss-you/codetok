@@ -44,6 +44,10 @@ type UsageEvent struct {
 	TokenUsage   TokenUsage
 	SourcePath   string
 	EventID      string
+	// DedupKey identifies the same logical usage point across duplicated
+	// provider logs (e.g. Codex forked sessions replaying the parent's
+	// cumulative token stream). Empty means the event never deduplicates.
+	DedupKey string `json:"-"`
 }
 
 // DailyStats represents aggregated token usage for a single day.
