@@ -1,9 +1,9 @@
 package claude
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -174,7 +174,9 @@ func collectSessionPaths(baseDir string) ([]string, map[string]string, error) {
 }
 
 // collectPaths walks a base directory and appends discovered JSONL session file paths.
-// It scans both top-level session files and subagent files in <session-uuid>/subagents/.
+// It recursively scans each project directory so top-level session files, subagent
+// files in <session-uuid>/subagents/, and deeper layouts such as
+// subagents/workflows/<workflow>/ are all covered.
 // Returns an error if the base directory cannot be read.
 func collectPaths(baseDir string, paths *[]string, pathToSlug map[string]string) error {
 	projectDirs, err := os.ReadDir(baseDir)
@@ -189,36 +191,14 @@ func collectPaths(baseDir string, paths *[]string, pathToSlug map[string]string)
 		projectSlug := pd.Name()
 		projectPath := filepath.Join(baseDir, projectSlug)
 
-		entries, err := os.ReadDir(projectPath)
-		if err != nil {
-			continue
-		}
-
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				if strings.HasSuffix(entry.Name(), ".jsonl") {
-					sessionPath := filepath.Join(projectPath, entry.Name())
-					*paths = append(*paths, sessionPath)
-					pathToSlug[sessionPath] = projectSlug
-				}
-				continue
+		_ = filepath.WalkDir(projectPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
+				return nil
 			}
-
-			// Check for subagents/ subdirectory inside session directories
-			subagentsDir := filepath.Join(projectPath, entry.Name(), "subagents")
-			subEntries, err := os.ReadDir(subagentsDir)
-			if err != nil {
-				continue
-			}
-			for _, sub := range subEntries {
-				if sub.IsDir() || !strings.HasSuffix(sub.Name(), ".jsonl") {
-					continue
-				}
-				subPath := filepath.Join(subagentsDir, sub.Name())
-				*paths = append(*paths, subPath)
-				pathToSlug[subPath] = projectSlug
-			}
-		}
+			*paths = append(*paths, path)
+			pathToSlug[path] = projectSlug
+			return nil
+		})
 	}
 
 	return nil
@@ -253,20 +233,15 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 	dedupUsage := make(map[string]usageEntry)
 	var uniqueCounter int // fallback counter for entries with no dedup key
 
-	scanner := bufio.NewScanner(f)
-	// Increase buffer size for long lines
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	err = provider.EachJSONLLine(f, func(line []byte) {
 		if len(line) == 0 {
-			continue
+			return
 		}
 
 		var event claudeEvent
 		if err := json.Unmarshal(line, &event); err != nil {
 			// Skip malformed lines
-			continue
+			return
 		}
 
 		ts, _ := time.Parse(time.RFC3339Nano, event.Timestamp)
@@ -283,7 +258,7 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 		switch event.Type {
 		case "user":
 			if event.UserType != "" && event.UserType != "external" {
-				continue
+				return
 			}
 			turns++
 			// Use the first user message as the title
@@ -315,9 +290,8 @@ func parseSession(path, projectSlug string) (provider.SessionInfo, error) {
 		if info.SessionID == "" && event.SessionID != "" {
 			info.SessionID = event.SessionID
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
+	})
+	if err != nil {
 		return provider.SessionInfo{}, err
 	}
 
@@ -363,20 +337,15 @@ func parseUsageEvents(path, projectSlug string) ([]provider.UsageEvent, error) {
 	var modelName string
 	var title string
 
-	scanner := bufio.NewScanner(f)
-	// Increase buffer size for long lines
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	err = provider.EachJSONLLine(f, func(line []byte) {
 		if len(line) == 0 {
-			continue
+			return
 		}
 
 		var event claudeEvent
 		if err := json.Unmarshal(line, &event); err != nil {
 			// Skip malformed lines
-			continue
+			return
 		}
 
 		if sessionID == "" && event.SessionID != "" {
@@ -386,7 +355,7 @@ func parseUsageEvents(path, projectSlug string) ([]provider.UsageEvent, error) {
 		switch event.Type {
 		case "user":
 			if event.UserType != "" && event.UserType != "external" {
-				continue
+				return
 			}
 			if title == "" {
 				title = extractUserText(event.Message.Content)
@@ -398,12 +367,12 @@ func parseUsageEvents(path, projectSlug string) ([]provider.UsageEvent, error) {
 				modelName = model
 			}
 			if event.Message.Usage == nil {
-				continue
+				return
 			}
 
 			ts, err := time.Parse(time.RFC3339Nano, event.Timestamp)
 			if err != nil || ts.IsZero() {
-				continue
+				return
 			}
 
 			key := dedupKey(event.Message.ID, event.RequestID, &uniqueCounter)
@@ -420,9 +389,8 @@ func parseUsageEvents(path, projectSlug string) ([]provider.UsageEvent, error) {
 				},
 			}
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 

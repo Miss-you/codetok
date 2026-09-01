@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -36,7 +35,11 @@ type codexEvent struct {
 type sessionMetaPayload struct {
 	codexModelFields
 
-	ID        string `json:"id"`
+	ID string `json:"id"`
+	// SessionID is the root conversation/thread ID. Forked sessions and
+	// spawned subagent threads share it while having distinct rollout IDs,
+	// which makes it the scope for cross-file replay deduplication.
+	SessionID string `json:"session_id"`
 	Timestamp string `json:"timestamp"`
 	Cwd       string `json:"cwd"`
 }
@@ -95,6 +98,25 @@ type codexUsageState struct {
 	previousTotal  *codexTokenUsage
 	pendingLast    codexTokenUsage
 	hasPendingLast bool
+	// currentTotal is the cumulative position in the conversation's token
+	// stream after the last processed token_count event, used to build
+	// cross-file replay dedup keys.
+	currentTotal    codexTokenUsage
+	hasCurrentTotal bool
+}
+
+// setCurrentTotal records the authoritative cumulative position from a
+// total_token_usage event.
+func (s *codexUsageState) setCurrentTotal(total codexTokenUsage) {
+	s.currentTotal = total
+	s.hasCurrentTotal = true
+}
+
+// advanceCurrentTotal accumulates a last_token_usage delta for streams that
+// do not carry cumulative totals.
+func (s *codexUsageState) advanceCurrentTotal(last codexTokenUsage) {
+	s.currentTotal = addCodexRawTokenUsage(s.currentTotal, last)
+	s.hasCurrentTotal = true
 }
 
 func (u codexTokenUsage) toProviderTokenUsage() provider.TokenUsage {
@@ -118,6 +140,30 @@ func (p *Provider) CollectSessions(baseDir string) ([]provider.SessionInfo, erro
 		return parseCodexSession(path)
 	})
 
+	// Forked sessions and subagent threads replay the root conversation's
+	// cumulative token stream, so per-file sums double-count replayed history.
+	// Recompute per-session usage from cross-file deduplicated usage events.
+	rawEvents := provider.ParseUsageEventsParallel(paths, 0, parseCodexUsageEvents)
+	seen := make(map[string]bool)
+	for _, e := range rawEvents {
+		seen[e.SessionID] = true
+	}
+	usageBySession := make(map[string]provider.TokenUsage)
+	for _, e := range dedupCodexReplayEvents(rawEvents) {
+		u := usageBySession[e.SessionID]
+		addCodexTokenUsage(&u, e.TokenUsage)
+		usageBySession[e.SessionID] = u
+	}
+	for i := range sessions {
+		if u, ok := usageBySession[sessions[i].SessionID]; ok {
+			sessions[i].TokenUsage = u
+		} else if seen[sessions[i].SessionID] {
+			// All events were deduplicated away: a pure replay with no own
+			// tokens, which must be zeroed rather than left at replayed totals.
+			sessions[i].TokenUsage = provider.TokenUsage{}
+		}
+	}
+
 	return sessions, nil
 }
 
@@ -140,10 +186,50 @@ func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCo
 		opts.Metrics.ParsedFiles += len(paths)
 	}
 	events := provider.ParseUsageEventsParallel(paths, 0, parseCodexUsageEvents)
+	events = dedupCodexReplayEvents(events)
 	if opts.Metrics != nil {
 		opts.Metrics.EmittedEvents += len(events)
 	}
 	return events, nil
+}
+
+// codexDedupKey identifies one increment point in a conversation's cumulative
+// token stream. Forked sessions and spawned subagent threads replay the root
+// conversation's token_count stream into their own rollout files; the shared
+// root session ID plus the cumulative tuple pins each increment so replays can
+// be deduplicated across files. An empty threadID disables dedup for
+// old-format files that predate the session_id field.
+func codexDedupKey(threadID string, total codexTokenUsage) string {
+	if threadID == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d:%d:%d:%d:%d", threadID,
+		total.InputTokens, total.CachedInputTokens, total.OutputTokens,
+		total.ReasoningOutputTokens, total.TotalTokens)
+}
+
+// dedupCodexReplayEvents drops replayed copies of the same token increment,
+// keeping the event with the earliest timestamp so day attribution lands on
+// the day the tokens were actually consumed rather than the fork day.
+func dedupCodexReplayEvents(events []provider.UsageEvent) []provider.UsageEvent {
+	best := make(map[string]int, len(events))
+	kept := make([]provider.UsageEvent, 0, len(events))
+	for _, e := range events {
+		if e.DedupKey == "" {
+			kept = append(kept, e)
+			continue
+		}
+		idx, ok := best[e.DedupKey]
+		if !ok {
+			best[e.DedupKey] = len(kept)
+			kept = append(kept, e)
+			continue
+		}
+		if e.Timestamp.Before(kept[idx].Timestamp) {
+			kept[idx] = e
+		}
+	}
+	return kept
 }
 
 func filterCodexUsageEventPaths(paths []string, opts provider.UsageEventCollectOptions) []string {
@@ -290,26 +376,21 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 		ProviderName: "codex",
 	}
 
-	scanner := bufio.NewScanner(f)
-	// Increase buffer size for long lines
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-
 	var usage provider.TokenUsage
 	var hasUsage bool
 	var usageState codexUsageState
 	var startTime, endTime time.Time
 	var turns int
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	err = provider.EachJSONLLine(f, func(line []byte) {
 		if len(line) == 0 {
-			continue
+			return
 		}
 
 		var event codexEvent
 		if err := json.Unmarshal(line, &event); err != nil {
 			// Skip malformed lines
-			continue
+			return
 		}
 
 		// Track timestamps for start/end
@@ -329,7 +410,7 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 		case "session_meta":
 			var meta sessionMetaPayload
 			if err := json.Unmarshal(event.Payload, &meta); err != nil {
-				continue
+				return
 			}
 			if info.SessionID == "" {
 				info.SessionID = meta.ID
@@ -347,7 +428,7 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 		case "event_msg":
 			var msg eventMsgPayload
 			if err := json.Unmarshal(event.Payload, &msg); err != nil {
-				continue
+				return
 			}
 
 			switch msg.Type {
@@ -365,14 +446,14 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 					if info.ModelName == "" {
 						info.ModelName = msg.firstModel("")
 					}
-					continue
+					return
 				}
 				var tci tokenCountInfo
 				if err := json.Unmarshal(msg.Info, &tci); err != nil {
 					if info.ModelName == "" {
 						info.ModelName = msg.firstModel(extractModelFromRawJSON(msg.Info))
 					}
-					continue
+					return
 				}
 				if info.ModelName == "" {
 					info.ModelName = msg.firstModel(tci.firstModel())
@@ -393,9 +474,8 @@ func parseCodexSession(path string) (provider.SessionInfo, error) {
 				info.ModelName = extractModelFromRawJSON(event.Payload)
 			}
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
+	})
+	if err != nil {
 		return provider.SessionInfo{}, err
 	}
 
@@ -418,31 +498,34 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 
 	var events []provider.UsageEvent
 	var sessionID string
+	var threadID string
 	var title string
 	var currentModel string
 	var usageState codexUsageState
 	var lineNumber int
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-
-	for scanner.Scan() {
+	err = provider.EachJSONLLine(f, func(line []byte) {
 		lineNumber++
-		line := scanner.Bytes()
 		if len(line) == 0 {
-			continue
+			return
 		}
 
 		var event codexEvent
 		if err := json.Unmarshal(line, &event); err != nil {
-			continue
+			return
 		}
 
 		switch event.Type {
 		case "session_meta":
 			var meta sessionMetaPayload
 			if err := json.Unmarshal(event.Payload, &meta); err != nil {
-				continue
+				return
+			}
+			if threadID == "" {
+				threadID = strings.TrimSpace(meta.SessionID)
+				if threadID == "" {
+					threadID = strings.TrimSpace(meta.ID)
+				}
 			}
 			if sessionID == "" && strings.TrimSpace(meta.ID) != "" {
 				sessionID = strings.TrimSpace(meta.ID)
@@ -457,7 +540,7 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 		case "event_msg":
 			var msg eventMsgPayload
 			if err := json.Unmarshal(event.Payload, &msg); err != nil {
-				continue
+				return
 			}
 
 			switch msg.Type {
@@ -479,25 +562,29 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 					if model := msg.firstModel(""); model != "" {
 						currentModel = model
 					}
-					continue
+					return
 				}
 				var tci tokenCountInfo
 				if err := json.Unmarshal(msg.Info, &tci); err != nil {
 					if model := msg.firstModel(extractModelFromRawJSON(msg.Info)); model != "" {
 						currentModel = model
 					}
-					continue
+					return
 				}
 				if model := msg.firstModel(tci.firstModel()); model != "" {
 					currentModel = model
 				}
 				ts, err := time.Parse(time.RFC3339Nano, event.Timestamp)
 				if err != nil {
-					continue
+					return
 				}
 				usage, ok := codexUsageDelta(tci, &usageState)
 				if !ok || usage.Total() == 0 {
-					continue
+					return
+				}
+				var dedupKey string
+				if usageState.hasCurrentTotal {
+					dedupKey = codexDedupKey(threadID, usageState.currentTotal)
 				}
 				events = append(events, provider.UsageEvent{
 					ProviderName: "codex",
@@ -508,6 +595,7 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 					TokenUsage:   usage,
 					SourcePath:   path,
 					EventID:      fmt.Sprintf("%s:%d", path, lineNumber),
+					DedupKey:     dedupKey,
 				})
 
 			default:
@@ -521,9 +609,8 @@ func parseCodexUsageEvents(path string) ([]provider.UsageEvent, error) {
 				currentModel = model
 			}
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 	return events, nil
@@ -536,8 +623,10 @@ func codexUsageDelta(info tokenCountInfo, state *codexUsageState) (provider.Toke
 			total := *info.TotalTokenUsage
 			state.previousTotal = &total
 			state.clearPendingLast()
+			state.setCurrentTotal(total)
 		} else {
 			state.addPendingLast(last)
+			state.advanceCurrentTotal(last)
 		}
 		return last.toProviderTokenUsage(), true
 	}
@@ -555,6 +644,7 @@ func codexUsageDelta(info tokenCountInfo, state *codexUsageState) (provider.Toke
 	}
 	state.previousTotal = &total
 	state.clearPendingLast()
+	state.setCurrentTotal(total)
 	return delta.toProviderTokenUsage(), true
 }
 

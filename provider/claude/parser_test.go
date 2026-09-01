@@ -1009,3 +1009,61 @@ func TestCollectClaudeSessions_MultipleProjects(t *testing.T) {
 		t.Errorf("project-beta sessions = %d, want 1", slugs["project-beta"])
 	}
 }
+
+func TestCollectClaudeUsageEvents_IncludesWorkflowSubagentPaths(t *testing.T) {
+	baseDir := t.TempDir()
+	projectDir := filepath.Join(baseDir, "project-x")
+	workflowDir := filepath.Join(projectDir, "session-abc", "subagents", "workflows", "wf_1")
+	if err := os.MkdirAll(workflowDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	agentPath := filepath.Join(workflowDir, "agent-a1.jsonl")
+	agentContent := `{"type":"assistant","requestId":"req-wf","sessionId":"session-abc","timestamp":"2026-04-16T10:02:00Z","message":{"id":"msg-wf","model":"claude-haiku-4-5","role":"assistant","content":[{"type":"text","text":"wf"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":20}}}
+`
+	if err := os.WriteFile(agentPath, []byte(agentContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := (&Provider{}).CollectUsageEvents(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 from workflow subagent", len(events))
+	}
+	if events[0].SourcePath != agentPath {
+		t.Errorf("SourcePath = %q, want %q", events[0].SourcePath, agentPath)
+	}
+	if events[0].WorkDirHash != "project-x" {
+		t.Errorf("WorkDirHash = %q, want project-x", events[0].WorkDirHash)
+	}
+}
+
+func TestParseClaudeUsageEvents_LongLines(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "long-session.jsonl")
+	longText := strings.Repeat("x", 3*1024*1024)
+	content := `{"type":"user","sessionId":"long-session","timestamp":"2026-04-16T10:00:00Z","message":{"role":"user","content":"` + longText + `"}}
+{"type":"assistant","requestId":"req-long","sessionId":"long-session","timestamp":"2026-04-16T10:01:00Z","message":{"id":"msg-long","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":30}}}
+`
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := parseUsageEvents(filePath, "project-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1 (file with >1MB line must not be dropped)", len(events))
+	}
+
+	info, err := parseSession(filePath, "project-x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info.TokenUsage.Total() != 130 {
+		t.Errorf("session usage Total = %d, want 130", info.TokenUsage.Total())
+	}
+}
