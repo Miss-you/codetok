@@ -198,3 +198,31 @@ func TestParseCodexUsageEvents_LongLines(t *testing.T) {
 		t.Errorf("session usage Total = %d, want 1300", info.TokenUsage.Total())
 	}
 }
+
+func TestCollectCodexUsageEvents_SameFileCounterResetKeepsBothIncrements(t *testing.T) {
+	baseDir := t.TempDir()
+	// The cumulative counter resets mid-file and later climbs back to a tuple
+	// seen before the reset. Both increments are real usage in one file and
+	// must survive cross-file replay dedup.
+	writeCodexRollout(t, baseDir, "15", "rollout-reset.jsonl", `{"timestamp":"2026-04-15T10:00:00Z","type":"session_meta","payload":{"id":"rollout-reset","session_id":"thread-reset","timestamp":"2026-04-15T10:00:00Z","cwd":"/test"}}
+{"timestamp":"2026-04-15T10:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":300,"reasoning_output_tokens":0,"total_tokens":1300}}}}
+{"timestamp":"2026-04-15T11:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":400,"cached_input_tokens":0,"output_tokens":100,"reasoning_output_tokens":0,"total_tokens":500}}}}
+{"timestamp":"2026-04-15T12:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":200,"output_tokens":300,"reasoning_output_tokens":0,"total_tokens":1300}}}}
+`)
+
+	events, err := (&Provider{}).CollectUsageEvents(baseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3 (same-file reset increments must be kept)", len(events))
+	}
+	var total int
+	for _, e := range events {
+		total += e.TokenUsage.Total()
+	}
+	// 1300 + 500 (reset epoch) + 800 (climb from 500 back to 1300)
+	if total != 2600 {
+		t.Errorf("total usage = %d, want 2600", total)
+	}
+}

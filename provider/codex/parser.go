@@ -197,8 +197,9 @@ func (p *Provider) collectUsageEvents(baseDir string, opts provider.UsageEventCo
 // token stream. Forked sessions and spawned subagent threads replay the root
 // conversation's token_count stream into their own rollout files; the shared
 // root session ID plus the cumulative tuple pins each increment so replays can
-// be deduplicated across files. An empty threadID disables dedup for
-// old-format files that predate the session_id field.
+// be deduplicated across files. When a file predates the session_id field,
+// threadID falls back to the rollout ID, so old-format files keep their
+// per-file identity and never merge with each other.
 func codexDedupKey(threadID string, total codexTokenUsage) string {
 	if threadID == "" {
 		return ""
@@ -211,6 +212,9 @@ func codexDedupKey(threadID string, total codexTokenUsage) string {
 // dedupCodexReplayEvents drops replayed copies of the same token increment,
 // keeping the event with the earliest timestamp so day attribution lands on
 // the day the tokens were actually consumed rather than the fork day.
+// Replay copies always come from a different rollout file; equal keys within
+// one SourcePath mean the cumulative counter reset and re-passed a tuple,
+// which is real usage and must be kept.
 func dedupCodexReplayEvents(events []provider.UsageEvent) []provider.UsageEvent {
 	best := make(map[string]int, len(events))
 	kept := make([]provider.UsageEvent, 0, len(events))
@@ -220,8 +224,10 @@ func dedupCodexReplayEvents(events []provider.UsageEvent) []provider.UsageEvent 
 			continue
 		}
 		idx, ok := best[e.DedupKey]
-		if !ok {
-			best[e.DedupKey] = len(kept)
+		if !ok || kept[idx].SourcePath == e.SourcePath {
+			if !ok {
+				best[e.DedupKey] = len(kept)
+			}
 			kept = append(kept, e)
 			continue
 		}
