@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	cursorapi "github.com/miss-you/codetok/cursor"
 	"github.com/miss-you/codetok/internal/testutil"
@@ -67,7 +68,7 @@ func emptyDir(t *testing.T) string {
 func isolatedArgs(t *testing.T, extraArgs ...string) []string {
 	t.Helper()
 	empty := emptyDir(t)
-	base := []string{"--claude-dir", empty, "--codex-dir", empty, "--cursor-dir", empty}
+	base := []string{"--claude-dir", empty, "--codex-dir", empty, "--cursor-dir", empty, "--antigravity-dir", empty}
 	return append(base, extraArgs...)
 }
 
@@ -79,6 +80,7 @@ func crossDayProviderArgs(t *testing.T) []string {
 		"--claude-dir", filepath.Join(root, "claude"),
 		"--kimi-dir", filepath.Join(root, "kimi"),
 		"--cursor-dir", emptyDir(t),
+		"--antigravity-dir", emptyDir(t),
 	}
 }
 
@@ -135,7 +137,7 @@ func writeCursorActivityDB(t *testing.T, rows []activityFixtureRow) string {
 func defaultCursorArgs(t *testing.T, extraArgs ...string) []string {
 	t.Helper()
 	empty := emptyDir(t)
-	base := []string{"--claude-dir", empty, "--codex-dir", empty, "--kimi-dir", empty}
+	base := []string{"--claude-dir", empty, "--codex-dir", empty, "--kimi-dir", empty, "--antigravity-dir", empty}
 	return append(base, extraArgs...)
 }
 
@@ -445,6 +447,7 @@ func TestCursorActivityDoesNotPolluteDailyJSONTokenFields(t *testing.T) {
 		"--claude-dir", emptyDir(t),
 		"--codex-dir", emptyDir(t),
 		"--kimi-dir", emptyDir(t),
+		"--antigravity-dir", emptyDir(t),
 		"daily", "--json", "--all",
 		"--cursor-dir", cursorDir,
 	}
@@ -493,6 +496,7 @@ func TestCursorActivityDoesNotPolluteSessionJSONTokenFields(t *testing.T) {
 		"--claude-dir", emptyDir(t),
 		"--codex-dir", emptyDir(t),
 		"--kimi-dir", emptyDir(t),
+		"--antigravity-dir", emptyDir(t),
 		"session", "--json",
 		"--cursor-dir", cursorDir,
 	}
@@ -757,7 +761,7 @@ func TestClaudeSubagentSessions_JSONOutput(t *testing.T) {
 	bin := buildBinary(t)
 	claudeDir := claudeTestdataDir(t)
 	empty := emptyDir(t)
-	args := []string{"--claude-dir", claudeDir, "--codex-dir", empty, "--cursor-dir", empty, "--kimi-dir", empty, "session", "--json"}
+	args := []string{"--claude-dir", claudeDir, "--codex-dir", empty, "--cursor-dir", empty, "--kimi-dir", empty, "--antigravity-dir", empty, "session", "--json"}
 	output := runCodetok(t, bin, args...)
 
 	var sessions []struct {
@@ -796,7 +800,7 @@ func TestClaudeSubagentSessions_DailyOutput(t *testing.T) {
 	bin := buildBinary(t)
 	claudeDir := claudeTestdataDir(t)
 	empty := emptyDir(t)
-	args := []string{"--claude-dir", claudeDir, "--codex-dir", empty, "--cursor-dir", empty, "--kimi-dir", empty, "daily", "--json", "--all"}
+	args := []string{"--claude-dir", claudeDir, "--codex-dir", empty, "--cursor-dir", empty, "--kimi-dir", empty, "--antigravity-dir", empty, "daily", "--json", "--all"}
 	output := runCodetok(t, bin, args...)
 
 	var daily []provider.DailyStats
@@ -826,7 +830,7 @@ func TestDailyCommand_JSONOutput_CursorProvider(t *testing.T) {
 	args := []string{
 		"daily", "--json", "--all",
 		"--cursor-dir", cursorDir,
-		"--kimi-dir", empty,
+		"--kimi-dir", empty, "--antigravity-dir", empty,
 		"--claude-dir", empty,
 		"--codex-dir", empty,
 	}
@@ -872,7 +876,7 @@ func TestDailyCommand_DashboardOutput_CursorProvider(t *testing.T) {
 	args := []string{
 		"daily", "--all",
 		"--cursor-dir", cursorDir,
-		"--kimi-dir", empty,
+		"--kimi-dir", empty, "--antigravity-dir", empty,
 		"--claude-dir", empty,
 		"--codex-dir", empty,
 	}
@@ -893,7 +897,7 @@ func TestSessionCommand_JSONOutput_CursorProvider(t *testing.T) {
 	args := []string{
 		"session", "--json",
 		"--cursor-dir", cursorDir,
-		"--kimi-dir", empty,
+		"--kimi-dir", empty, "--antigravity-dir", empty,
 		"--claude-dir", empty,
 		"--codex-dir", empty,
 	}
@@ -1137,5 +1141,65 @@ func TestSessionCommand_CursorDoesNotAccessRemoteAPI(t *testing.T) {
 	}
 	if requests() != 0 {
 		t.Fatalf("expected 0 proxy requests, got %d", requests())
+	}
+}
+
+func TestAntigravityProvider_DailyAndSessionJSON(t *testing.T) {
+	bin := buildBinary(t)
+	day1 := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+	day2 := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	root := testutil.WriteAntigravityRoot(t, map[string][]testutil.AntigravityCall{
+		"agy-conv-1": {
+			{Model: "gemini-4-hydrogen", Time: day1, Input: 100, Output: 30, CacheRead: 1000},
+			{Model: "gemini-4-hydrogen", Time: day2, Input: 50, Output: 20, CacheRead: 1100, CacheWrite: 5},
+		},
+	})
+	empty := emptyDir(t)
+	providerArgs := []string{"--antigravity-dir", root, "--kimi-dir", empty, "--claude-dir", empty, "--codex-dir", empty, "--cursor-dir", empty}
+
+	output := runCodetok(t, bin, append(providerArgs, "daily", "--json", "--all", "--timezone", "UTC")...)
+	var daily []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+	want := map[string]provider.TokenUsage{
+		"2026-11-19": {InputOther: 100, Output: 30, InputCacheRead: 1000},
+		"2026-11-20": {InputOther: 50, Output: 20, InputCacheRead: 1100, InputCacheCreate: 5},
+	}
+	if len(daily) != len(want) {
+		t.Fatalf("expected %d daily rows, got %d: %s", len(want), len(daily), output)
+	}
+	for _, d := range daily {
+		if d.ProviderName != "antigravity" || d.TokenUsage != want[d.Date] {
+			t.Errorf("row %s: provider %q usage %+v, want antigravity %+v", d.Date, d.ProviderName, d.TokenUsage, want[d.Date])
+		}
+	}
+
+	output = runCodetok(t, bin, append(providerArgs, "daily", "--json", "--all", "--group-by", "model", "--timezone", "UTC")...)
+	var byModel []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &byModel); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+	if len(byModel) != 2 {
+		t.Fatalf("expected 2 model rows, got %d: %s", len(byModel), output)
+	}
+	for _, d := range byModel {
+		if d.Group != "gemini-4-hydrogen" {
+			t.Errorf("model group = %q, want gemini-4-hydrogen", d.Group)
+		}
+	}
+
+	output = runCodetok(t, bin, append(providerArgs, "session", "--json", "--since", "2026-11-01", "--until", "2026-11-30")...)
+	var sessions []struct {
+		SessionID    string              `json:"session_id"`
+		ProviderName string              `json:"provider"`
+		TokenUsage   provider.TokenUsage `json:"token_usage"`
+	}
+	if err := json.Unmarshal([]byte(output), &sessions); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "agy-conv-1" || sessions[0].ProviderName != "antigravity" ||
+		sessions[0].TokenUsage != (provider.TokenUsage{InputOther: 150, Output: 50, InputCacheRead: 2100, InputCacheCreate: 5}) {
+		t.Errorf("sessions = %+v", sessions)
 	}
 }
