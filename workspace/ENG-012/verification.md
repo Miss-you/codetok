@@ -6,7 +6,7 @@
 | --- | --- |
 | `make fmt` | clean |
 | `make vet` | pass |
-| `make test` | pass; `scripts/archive-records` 71.4% coverage, all other packages unchanged and passing |
+| `make test` | pass (rerun after AI review round 1 fixes); all packages pass |
 | `make build` | pass |
 | `make lint` (golangci-lint) | 0 issues |
 | `go test ./scripts/archive-records/ -run TestArchiveScript -v` | 5/5 subtests pass (archive, rerun no-op, no-marker skip, fork skip, invalid AI output) |

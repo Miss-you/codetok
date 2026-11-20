@@ -52,6 +52,22 @@ func TestParseCommentNoMarker(t *testing.T) {
 	}
 }
 
+func TestInlineMarkerMentionIsNotARecord(t *testing.T) {
+	for _, body := range []string{
+		"Use `<!-- codetok-records:ENG-012 -->` as the marker.",
+		"> quoted <!-- codetok-records:ENG-012 -->\n- `workspace/ENG-012/`",
+	} {
+		if _, ok, err := ParseComment(body); ok || err != nil {
+			t.Errorf("ParseComment(%q): ok=%v err=%v, want no marker", body, ok, err)
+		}
+	}
+	real := Marker("ENG-012") + "\n- `workspace/ENG-012/`"
+	mention := "AI review: see `<!-- codetok-records:ENG-012 -->`"
+	if _, _, found, _, err := FindRecords([]Comment{comment(1, "OWNER", real), comment(2, "OWNER", mention)}); !found || err != nil {
+		t.Fatalf("a mention in another comment broke FindRecords: found=%v err=%v", found, err)
+	}
+}
+
 func TestParseCommentErrors(t *testing.T) {
 	cases := map[string]string{
 		"two markers":       Marker("A") + "\n" + Marker("B") + "\n- `workspace/A/`",

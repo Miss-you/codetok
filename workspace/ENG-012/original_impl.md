@@ -7,4 +7,4 @@ State of `main` at 2a4d0e9 (2026-11-20):
 - AI review (#54 / PR #55) is `scripts/ai-review.sh --pr N`, run locally by the agent after every push to a PR head. It is not a workflow. Any commit added to the PR head (for example an archive commit) would need another review round.
 - `.github/workflows/` has `ci.yml` (push to main + pull_request) and `release.yml` (tags). No self-hosted job exists yet; ENG-011 (#56) registers the runner `codetok-mac-mini` with labels `self-hosted, macOS, ARM64, codetok-local, ai`.
 - The runner user has `gh` logged in and `gh auth git-credential` configured as the git credential helper for github.com, so `git push` over https works without repo secrets.
-- `openspec/changes/archive/` does not exist yet; the `openspec-archive-change` skill moves a change directory there and syncs specs.
+- `openspec/changes/archive/` was empty (only a `.gitkeep`, added by #59 while this task was open); the `openspec-archive-change` skill moves a change directory there and syncs specs.

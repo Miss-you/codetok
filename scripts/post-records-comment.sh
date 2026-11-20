@@ -38,17 +38,22 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ -n $pr && -n $task ]] || die "usage: scripts/post-records-comment.sh --pr <number> --task <task-id> <path>..." 2
+# bash 3.2 (macOS /bin/bash) treats an empty array as unset under set -u.
+[[ ${#tool_args[@]} -gt 0 ]] || die "list at least one path or --inline NAME=FILE" 2
+for bin in go python3; do command -v "$bin" >/dev/null 2>&1 || die "$bin is not on PATH." 127; done
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 body=$work/body.md
 go run ./scripts/archive-records comment --task "$task" "${tool_args[@]}" >"$body"
 
-# Listed repository paths must exist in this checkout, so typos fail here and
-# not after the merge.
+# Listed repository paths must be tracked and committed, because the archive
+# reads them from the merge commit. Catch typos and forgotten commits here.
 for arg in "${tool_args[@]}"; do
     case $arg in --inline|*=*) continue ;; esac
-    [[ -e $arg ]] || die "$arg does not exist in this checkout"
+    [[ -n $(git ls-files -- "$arg") ]] || die "$arg is not tracked by git; commit it first"
+    [[ -z $(git status --porcelain -- "$arg") ]] \
+        || printf 'post-records-comment: warning: %s has uncommitted changes; the archive uses the committed version\n' "$arg" >&2
 done
 
 if [[ $dry_run -eq 1 ]]; then
@@ -58,8 +63,11 @@ fi
 
 command -v gh >/dev/null 2>&1 || die "gh is not on PATH." 127
 marker="<!-- codetok-records:$task -->"
+# Same rule as the archive: the marker on a line of its own, in a comment by an
+# owner, member or collaborator. Anything else is not a records comment.
 ids=$(gh api --paginate "repos/$repo_slug/issues/$pr/comments" \
-    --jq ".[] | select(.body | contains(\"<!-- codetok-records:\")) | .id")
+    --jq '.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+               | select(.body | test("(?m)^<!-- codetok-records:[^ >]* -->[ \t]*\r?$")) | .id')
 count=$(grep -c . <<<"$ids" || true)
 if [[ $count -gt 1 ]]; then
     die "PR #$pr already has $count records comments ($(tr '\n' ' ' <<<"$ids")); delete the extras, then rerun"

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,9 +100,6 @@ func ParseSummary(data []byte, m Manifest) (Summary, error) {
 	var s Summary
 	if err := dec.Decode(&s); err != nil {
 		return Summary{}, fmt.Errorf("summary does not match the schema: %w", err)
-	}
-	if dec.More() {
-		return Summary{}, errors.New("summary has trailing data after the JSON object")
 	}
 	return s, validateSummary(s, m)
 }
@@ -222,7 +218,7 @@ func Finalize(repo, dest, stage, aiOutput string) (Manifest, error) {
 	}
 	s, err := ParseSummary(data, m)
 	if err != nil {
-		return m, fmt.Errorf("%w\nnothing was written; agent output: %s", err, aiOutput)
+		return m, fmt.Errorf("%w\nnothing was written", err)
 	}
 	if err := writeJSON(filepath.Join(archive, "summary.json"), s); err != nil {
 		return m, err

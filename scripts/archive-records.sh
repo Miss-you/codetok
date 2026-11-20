@@ -174,7 +174,8 @@ fi
 
 # 4. Validate and write.
 "$tool" finalize --repo "$worktree" --dest "$dest" --stage "$work/stage" --ai-output "$ai_output" >"$work/final.out" || {
-    sed -n '1,40p' "$ai_output" >&2
+    printf 'archive-records: last 40 lines of the agent output:\n' >&2
+    tail -n 40 "$ai_output" >&2
     die "the agy summary was rejected; nothing was written or committed."
 }
 message=$(sed -n 's/^commit_message=//p' "$work/final.out")

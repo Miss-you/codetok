@@ -3,6 +3,7 @@
 `final_impl_v1.md` is the approved plan. Review fixes folded in during implementation:
 
 - A root merge commit has no parent; the diff for the prompt falls back to the empty tree (found by the end-to-end script test).
+- AI review round 1 (agy, head ebda22d): the marker now counts only on a line of its own (quoting it inline in a review no longer breaks the archive or the helper); `post-records-comment.sh` applies the same author_association filter as the archive, guards the empty-array case for macOS bash 3.2, checks `go`/`python3`, and requires listed paths to be tracked by git; a rejected summary prints the last 40 lines of agent output.
 - `truncateUTF8` trims only a rune cut by the limit, not the whole buffer, for binary-ish files.
 
 ## Archive destination: `docs/changes/<task-id>/`, not `openspec/changes/archive/`

@@ -6,6 +6,7 @@ All automated checks: `go test ./scripts/archive-records/` (included in `make te
 | --- | --- |
 | Comment format round-trips (paths, inline blocks with tricky content, CRLF, ``` fences) | `TestRenderParseRoundTrip`, `TestParseCommentCRLFAndBacktickFence` |
 | Malformed or dangerous comments fail loudly (two markers, bad id, `..`, absolute, outside allowlist, `docs/changes`, wildcards, pathspec magic, duplicates, broken fences) | `TestParseCommentErrors` |
+| A marker quoted inline in another comment is not a records comment | `TestInlineMarkerMentionIsNotARecord` |
 | Untrusted authors' markers are ignored; two trusted comments is an error | `TestFindRecords` |
 | Files copied byte for byte from the merge commit, directories expanded, overlap deduplicated | `TestPlanCopiesVerbatim` |
 | Skip without side effects: fork, unmerged, other base, no marker, untrusted marker | `TestPlanSkips` |
