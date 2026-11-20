@@ -467,3 +467,47 @@ func TestRelativeDirOverride(t *testing.T) {
 		t.Fatalf("got %d events from a relative dir, want 2", len(events))
 	}
 }
+
+func TestGlobCharactersInDir(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "data[1]")
+	if err := os.MkdirAll(filepath.Join(root, "conversations", "not-a-file.db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	createConversationDB(t, filepath.Join(root, "conversations", "conv-a.db"), sampleConv()).Close()
+	events, err := (&Provider{}).CollectUsageEvents(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2 (glob characters in the path; a *.db directory is ignored)", len(events))
+	}
+}
+
+func TestOpenReadOnlyReportsCopyError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.db")
+	if err := os.WriteFile(path+"-wal", []byte("wal"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The database itself is missing, so every copy fails.
+	_, _, err := openReadOnly(path)
+	if err == nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("err = %v, want the copy's not-exist error", err)
+	}
+}
+
+func TestDecodeTimestampRejectsCorruptValues(t *testing.T) {
+	for name, ts := range map[string][]byte{
+		"seconds overflow": cat(pbUint(timestampSeconds, 1<<63)),
+		"nanos too large":  cat(pbUint(timestampSeconds, 1), pbUint(timestampNanos, 1_000_000_000)),
+	} {
+		fields, err := parseProto(pbBytes(stepCreatedAt, ts))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := decodeTimestamp(fields, stepCreatedAt); ok {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

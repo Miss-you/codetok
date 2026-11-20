@@ -146,9 +146,17 @@ func discover(baseDir string) ([]conversation, error) {
 
 	var convs []conversation
 	for _, root := range roots {
-		matches, err := filepath.Glob(filepath.Join(root, "conversations", "*.db"))
-		if err != nil {
+		// ReadDir, not Glob: the root may contain glob metacharacters.
+		dir := filepath.Join(root, "conversations")
+		entries, err := os.ReadDir(dir)
+		if err != nil && !os.IsNotExist(err) {
 			return nil, fmt.Errorf("listing antigravity conversations in %s: %w", root, err)
+		}
+		var matches []string
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".db") {
+				matches = append(matches, filepath.Join(dir, e.Name()))
+			}
 		}
 		if len(matches) == 0 {
 			continue
@@ -232,7 +240,11 @@ func openReadOnly(path string) (*sql.DB, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving %s: %w", path, err)
 	}
+	var copyErr error
 	for attempt := 0; attempt < maxCopyAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(20 * time.Millisecond) // let a streaming writer settle
+		}
 		before := stampFiles(abs)
 		if before.walSize == 0 {
 			db, err := sql.Open("sqlite", sqliteURI(abs, "immutable=1"))
@@ -242,12 +254,18 @@ func openReadOnly(path string) (*sql.DB, func(), error) {
 			return db, func() { db.Close() }, nil
 		}
 		db, cleanup, err := openCopy(abs)
-		if err == nil && stampFiles(abs) == before {
+		if err != nil {
+			copyErr = err
+			continue
+		}
+		if stampFiles(abs) == before {
 			return db, cleanup, nil
 		}
-		if cleanup != nil {
-			cleanup()
-		}
+		cleanup()
+		copyErr = nil
+	}
+	if copyErr != nil {
+		return nil, nil, copyErr
 	}
 	return nil, nil, fmt.Errorf("%s changed on every copy attempt", path)
 }
@@ -408,11 +426,11 @@ func decodeTimestamp(fields []protoField, num int) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	sec := uintField(ts, timestampSeconds)
-	if sec == 0 {
+	sec, nanos := uintField(ts, timestampSeconds), uintField(ts, timestampNanos)
+	if sec == 0 || sec > math.MaxInt64 || nanos >= uint64(time.Second) {
 		return time.Time{}, false
 	}
-	return time.Unix(int64(sec), int64(uintField(ts, timestampNanos))), true
+	return time.Unix(int64(sec), int64(nanos)), true
 }
 
 // decodeGeneration reads usage, model and step indices from a
@@ -472,6 +490,9 @@ func decodeGeneration(data []byte) (usage provider.TokenUsage, model string, ste
 // sessionFromEvents sums one conversation's events. The session model is the
 // most frequent call model (ties broken by name).
 func sessionFromEvents(events []provider.UsageEvent) provider.SessionInfo {
+	if len(events) == 0 {
+		return provider.SessionInfo{ProviderName: providerName}
+	}
 	s := provider.SessionInfo{
 		ProviderName: providerName,
 		SessionID:    events[0].SessionID,
