@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -155,7 +156,7 @@ func pathAllowed(c Candidate, p string) bool {
 	if c.Package == "" {
 		return false
 	}
-	if strings.HasPrefix(p, c.Package+"/testdata/") {
+	if strings.HasPrefix(p, path.Join(c.Package, "testdata")+"/") {
 		return true
 	}
 	if pkgDir(p) != c.Package || !strings.HasSuffix(p, ".go") {

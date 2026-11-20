@@ -66,10 +66,11 @@ main() {
     for tool in go git gh jq golangci-lint; do need "$tool"; done
     [[ $mode == dry-run ]] || { need acpx; need agy; }
 
-    # The tool is built once from the commit under test, before any agent edit.
-    go build -o "$out/autooptimize" ./scripts/autooptimize
-    ao="$out/autooptimize"
     go_path=$(go env GOPATH) go_cache=$(go env GOCACHE) go_modcache=$(go env GOMODCACHE)
+    rm -f "$out/rounds"
+    # Bootstrap build for the open-PR gate; rebuilt from the base commit below.
+    ao="$out/autooptimize"
+    go build -o "$ao" ./scripts/autooptimize
 
     if [[ $mode != dry-run ]]; then
         [[ -z $(git status --porcelain) ]] || die "the working tree is not clean; refusing to run"
@@ -90,6 +91,9 @@ main() {
         git fetch -q origin "refs/heads/$base_branch"
         base=$(git rev-parse FETCH_HEAD)
         git checkout -q --detach "$base"
+        # The tool comes from the commit under test, built before any agent edit.
+        go build -o "$ao" ./scripts/autooptimize
+        setup_proxy
     fi
     log "base $base"
 
@@ -99,7 +103,7 @@ main() {
     log "$(wc -l <"$out/candidates.txt" | tr -d ' ') candidate(s), list in $out/candidates.txt"
 
     # 4. Pick one, skipping candidates a person rejected or an earlier run abandoned.
-    gh pr list -R "$repo_slug" --label "$label" --state closed --limit 200 \
+    gh pr list -R "$repo_slug" --label "$label" --state closed --limit 1000 \
         --json number,body,mergedAt >"$out/closed-prs.json"
     gate "$ao" select -candidates "$out/candidates.json" -exclude "$state_dir/abandoned.txt" \
         -closed-prs "$out/closed-prs.json" -out "$out/candidate.json"
@@ -110,18 +114,18 @@ main() {
         return 0
     fi
 
-    branch="auto-optimize/$(date -u +%Y%m%d)-$cand_id"
+    branch="auto-optimize/$(date -u +%Y%m%dT%H%M%SZ)-$cand_id"
     git checkout -q -B "$branch"
-    setup_proxy
 
     # 5. Change, then verify; at most max_rounds fix rounds.
     write_change_prompt >"$out/prompt-0.md"
     run_agent "$out/prompt-0.md" "$out/agent-0.log" || give_up "the change agent failed (see agent-0.log)"
     while true; do
         if verify; then break; fi
-        local round
-        round=$("$ao" round -state "$out/rounds" -max "$max_rounds") \
-            || abandon "checks still fail after $max_rounds fix round(s); see $out/failure.md"
+        local round status=0
+        round=$("$ao" round -state "$out/rounds" -max "$max_rounds") || status=$?
+        [[ $status -ne 10 ]] || abandon "checks still fail after $max_rounds fix round(s); see failure.md"
+        [[ $status -eq 0 ]] || die "autooptimize round failed with status $status"
         log "fix round $round"
         write_fix_prompt >"$out/prompt-$round.md"
         run_agent "$out/prompt-$round.md" "$out/agent-$round.log" || give_up "the change agent failed in fix round $round"
@@ -225,7 +229,7 @@ guard_snapshot() {
 guard_state() {
     guard_files | while IFS= read -r f; do shasum -a 256 "$f"; done
     echo "-- ignored --"
-    git status --porcelain --ignored=matching --untracked-files=all | grep '^!!' | grep -v -E '^!! (output|bin)/' || true
+    git -c core.quotePath=false status --porcelain --ignored=matching --untracked-files=all | grep '^!!' || true
 }
 
 guard_check() {
@@ -464,9 +468,10 @@ EOF
 }
 
 # review_answer prints the reviewer's answer only, from its first Markdown
-# heading on, without the acpx trace (tool calls, file reads).
+# heading or bold title line on, without the acpx trace (tool calls, file reads).
 review_answer() {
-    awk '/^#{1,6} / {on=1} on' "$out/review/review.md" | grep -v -E '^\[(client|tool|done|thinking)\]|^  (input|output|kind|files):' \
+    awk '/^#{1,6} / || /^\*\*[^*]+\*\*:?[[:space:]]*$/ {on=1}
+         on && !/^\[(client|tool|done|thinking)\]/ && !/^  (input|output|kind|files):/' "$out/review/review.md" \
         | relative_paths
 }
 

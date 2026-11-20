@@ -17,3 +17,18 @@
 ## AI review of the PR
 
 Run `scripts/ai-review.sh --pr <number>` after opening the PR, per AGENTS.md; result goes in an `AI review: <sha>` PR comment.
+
+### PR #62, head b9e0a8b (`scripts/ai-review.sh --pr 62`, gemini-4-hydrogen)
+
+Critical: none. "Ready to merge? With fixes". All findings verified and fixed in the next commit:
+
+| Finding | Level | Action |
+| --- | --- | --- |
+| `guard_state` skipped ignored files under `output/`, `bin/`; `git status` quoted paths | Important | Exclusion removed (only new paths are acted on); `core.quotePath=false`. |
+| Same-day branch name collides after a push-then-`gh pr create` failure | Important | Branch is `auto-optimize/<UTC time>-<id>`. |
+| `review_answer` ignored bold-title reviews; empty output could fail under `pipefail` | Important | Starts at a heading or bold title line; filtering done inside `awk`. |
+| Tool built before checking out the base | Minor | Rebuilt right after `git checkout --detach $base`. |
+| `gate -max-open 0` panics | Minor | Usage error for values below 1; test added. |
+| Closed-PR history capped at 200; root-package `testdata/` | Minor | `--limit 1000`; `path.Join`; test added. |
+| Stale `rounds` in a reused out dir; any `round` error abandoned the candidate | Minor | `rounds` cleared at start; only exit 10 abandons, other errors `die`. |
+| Recommendation: `deadcode@v0.52.0` download needs the proxy | — | `setup_proxy` now runs before candidate collection in PR and no-pr modes. |

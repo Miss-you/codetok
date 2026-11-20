@@ -280,6 +280,7 @@ func TestCheckDiff(t *testing.T) {
 		{"coverage test file", cover, "40\t0\tcursor/sync_test.go\n", 200, nil},
 		{"coverage prod file", cover, "40\t0\tcursor/sync_test.go\n1\t1\tcursor/sync.go\n", 200, []string{"outside the allowed scope"}},
 		{"docs readmes", docs, "2\t1\tREADME.md\n2\t1\tREADME_zh.md\n", 200, nil},
+		{"root package testdata", Candidate{Kind: KindLint, Package: "."}, "1\t1\ttestdata/a.json\n1\t1\tmain.go\n", 200, nil},
 		{"docs code", docs, "2\t1\tREADME.md\n1\t1\tcmd/daily.go\n", 200, []string{"outside the allowed scope"}},
 	}
 	for _, tt := range tests {
@@ -407,6 +408,7 @@ func TestUsageErrors(t *testing.T) {
 		{"select"},
 		{"gate", "-open-prs", "x", "extra"},
 		{"describe", "-candidate", "x"},
+		{"gate", "-open-prs", "x", "-max-open", "0"},
 	} {
 		if err := run(args, &bytes.Buffer{}); !errors.As(err, &usage) {
 			t.Errorf("%v: want usage error, got %v", args, err)

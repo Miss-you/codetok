@@ -261,6 +261,9 @@ func runGate(fs *flag.FlagSet, args []string, stdout io.Writer) error {
 	if err := parse(fs, args, "open-prs"); err != nil {
 		return err
 	}
+	if *maxOpen < 1 {
+		return usageError{"gate: -max-open must be at least 1"}
+	}
 	prs, err := readPRs(*open)
 	if err != nil {
 		return err
