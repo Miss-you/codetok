@@ -511,3 +511,24 @@ func TestDecodeTimestampRejectsCorruptValues(t *testing.T) {
 		}
 	}
 }
+
+func TestBusyConversationFallsBackToMainFile(t *testing.T) {
+	root := writeRoot(t, []fixtureConv{sampleConv()}, nil)
+	path := filepath.Join(root, "conversations", "conv-a.db")
+	if err := os.WriteFile(path+"-wal", []byte("not a real wal"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a writer that changes the files on every look.
+	orig := stampFiles
+	n := int64(0)
+	stampFiles = func(string) fileStamp { n++; return fileStamp{walSize: 1, walMtime: n} }
+	t.Cleanup(func() { stampFiles = orig })
+
+	events, err := (&Provider{}).CollectUsageEvents(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want the 2 checkpointed rows from the main file", len(events))
+	}
+}

@@ -267,7 +267,13 @@ func openReadOnly(path string) (*sql.DB, func(), error) {
 	if copyErr != nil {
 		return nil, nil, copyErr
 	}
-	return nil, nil, fmt.Errorf("%s changed on every copy attempt", path)
+	// Still being written: read the main file alone. It misses the newest
+	// WAL frames but keeps the checkpointed history of the conversation.
+	db, err := sql.Open("sqlite", sqliteURI(abs, "immutable=1"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+	return db, func() { db.Close() }, nil
 }
 
 // fileStamp identifies the state of a database and its WAL.
@@ -276,7 +282,8 @@ type fileStamp struct {
 	dbMtime, walMtime int64
 }
 
-func stampFiles(path string) fileStamp {
+// stampFiles is a variable so tests can simulate a writer that never stops.
+var stampFiles = func(path string) fileStamp {
 	var s fileStamp
 	if info, err := os.Stat(path); err == nil {
 		s.dbSize, s.dbMtime = info.Size(), info.ModTime().UnixNano()
