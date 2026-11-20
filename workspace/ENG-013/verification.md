@@ -26,3 +26,7 @@ Same candidate, same 19-line deletion. Guard snapshots matched (no git/ignored/s
 ## Not yet verified
 
 - The workflow on the self-hosted runner (needs ENG-011 merged and the runner online) and PR mode (needs the `auto-optimize` label). See `todo.md`.
+
+## Workflow file lint
+
+GitHub reported "workflow file issue" for `auto-optimize.yml` on push: job-level `env:` used `runner.temp`, which is only available in steps. Moved to the step `env:`. `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -ignore 'label ".*" is unknown' .github/workflows/auto-optimize.yml` now passes; it reproduced the error on the old file. (The custom runner labels `codetok-local`, `ai` are expected to be unknown to actionlint.)

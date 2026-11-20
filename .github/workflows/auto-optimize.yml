@@ -36,8 +36,6 @@ jobs:
       (github.event_name == 'workflow_dispatch' || vars.AUTO_OPTIMIZE_SCHEDULE == 'true')
     runs-on: [self-hosted, codetok-local, ai]
     timeout-minutes: 120
-    env:
-      AUTO_OPTIMIZE_OUT_DIR: ${{ runner.temp }}/auto-optimize
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,6 +45,8 @@ jobs:
 
       - name: Run auto-optimize
         env:
+          # runner.temp is not available in job-level env, only in steps.
+          AUTO_OPTIMIZE_OUT_DIR: ${{ runner.temp }}/auto-optimize
           MODE: ${{ github.event_name == 'schedule' && 'pr' || inputs.mode }}
         run: |
           case "$MODE" in
