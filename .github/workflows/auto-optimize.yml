@@ -1,0 +1,79 @@
+name: Auto optimize
+
+# Proposes at most one small engineering-cleanup PR per run (#58).
+# How it works, how to turn it off and how to count the merge rate:
+# docs/auto-optimize.md.
+
+on:
+  schedule:
+    # Mondays 02:00 UTC (10:00 Beijing). Scheduled runs do nothing until the
+    # repository variable AUTO_OPTIMIZE_SCHEDULE is set to "true".
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "pr: open a PR; no-pr: everything except push/PR; dry-run: only list and pick a candidate"
+        type: choice
+        options: [pr, no-pr, dry-run]
+        default: pr
+
+# The job pushes and opens the PR with the runner machine's own git and gh
+# login, so the PR triggers CI like any human PR. GITHUB_TOKEN gets no rights.
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-optimize
+  cancel-in-progress: false
+
+jobs:
+  optimize:
+    name: Propose one cleanup
+    # Only in this repository (never in forks), and scheduled runs only when enabled.
+    # There is no pull_request trigger, so fork PRs can never start it.
+    if: >-
+      github.repository == 'Miss-you/codetok' &&
+      (github.event_name == 'workflow_dispatch' || vars.AUTO_OPTIMIZE_SCHEDULE == 'true')
+    runs-on: [self-hosted, codetok-local, ai]
+    timeout-minutes: 120
+    env:
+      AUTO_OPTIMIZE_OUT_DIR: ${{ runner.temp }}/auto-optimize
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run auto-optimize
+        env:
+          MODE: ${{ github.event_name == 'schedule' && 'pr' || inputs.mode }}
+        run: |
+          case "$MODE" in
+            pr) scripts/auto-optimize.sh ;;
+            no-pr) scripts/auto-optimize.sh --no-pr ;;
+            dry-run) scripts/auto-optimize.sh --dry-run ;;
+            *) echo "unknown mode $MODE" >&2; exit 2 ;;
+          esac
+
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-optimize-${{ github.run_id }}
+          # Reports and check output only. Agent transcripts, the raw review
+          # trace and git backups stay on the runner.
+          path: |
+            ${{ runner.temp }}/auto-optimize/candidates.*
+            ${{ runner.temp }}/auto-optimize/candidate.json
+            ${{ runner.temp }}/auto-optimize/check.txt
+            ${{ runner.temp }}/auto-optimize/numstat.txt
+            ${{ runner.temp }}/auto-optimize/failure.md
+            ${{ runner.temp }}/auto-optimize/test.log
+            ${{ runner.temp }}/auto-optimize/make-lint.log
+            ${{ runner.temp }}/auto-optimize/verdict.txt
+            ${{ runner.temp }}/auto-optimize/pr-body.md
+            ${{ runner.temp }}/auto-optimize/review-comment.md
+            ${{ runner.temp }}/auto-optimize/guard.diff
+          retention-days: 14
+          if-no-files-found: ignore

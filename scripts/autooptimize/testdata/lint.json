@@ -1,0 +1,6 @@
+{"Issues":[
+ {"FromLinter":"errcheck","Text":"Error return value of `f.Close` is not checked","Pos":{"Filename":"provider/kimi/parser.go","Line":40,"Column":2}},
+ {"FromLinter":"misspell","Text":"`recieve` is a misspelling of `receive`","Pos":{"Filename":"cmd/daily.go","Line":12,"Column":5}},
+ {"FromLinter":"unused","Text":"func `helper` is unused","Pos":{"Filename":"scripts/autooptimize/main.go","Line":3,"Column":1}},
+ {"FromLinter":"govet","Text":"printf: bad verb","Pos":{"Filename":"e2e/testdata/x.go","Line":1,"Column":1}}
+],"Report":{}}
