@@ -96,11 +96,17 @@ reset_workspace() {
 
 size_mb() { du -sm "$1" 2>/dev/null | awk '{print $1}'; }
 
+# Runner.Worker processes of all instances. ps, not pgrep: macOS pgrep leaves out its own
+# ancestors, and this hook runs inside our own worker.
+worker_count() {
+  ps -axo command= 2>/dev/null | grep -cE "^$RUNNERS_ROOT/[^/ ]+/bin/Runner\.Worker( |\$)" || true
+}
+
 # Other runner instances currently executing a job. This hook runs inside our own
 # Runner.Worker, so more than one worker process means someone else is busy.
 other_jobs_running() {
   local n
-  n=$(pgrep -f "$RUNNERS_ROOT/[^/]*/bin/Runner.Worker" 2>/dev/null | wc -l | tr -d ' ')
+  n=$(worker_count)
   # Our own worker must match; if nothing matches, the pattern is wrong: assume busy.
   [ "${n:-0}" -lt 1 ] && return 0
   [ "$n" -gt 1 ]
@@ -147,7 +153,7 @@ prune_caches() {
     rmdir "$lock" 2>/dev/null || true
   fi
   [ -d "$SHARED_DIR/cache" ] || { log "no shared cache directory, skipped"; return 0; }
-  log "runner workers running: $(pgrep -f "$RUNNERS_ROOT/[^/]*/bin/Runner.Worker" 2>/dev/null | wc -l | tr -d ' ') (this job included)"
+  log "runner workers running: $(worker_count) (this job included)"
   if ! mkdir "$lock" 2>/dev/null; then
     log "another instance is pruning, skipped"
     return 0
