@@ -25,6 +25,13 @@ When a task also has an OpenSpec change, the records comment lists `openspec/cha
 
 Per archived file 2 MiB, per PR 20 MiB; the prompt carries at most 48 KiB per file and 160 KiB of diff. The records comment must stay under GitHub's 65,536-character limit; larger content is committed under `workspace/<task-id>/` and listed by path.
 
-## Known risk outside this task
+## Trigger: push to main, owner only
 
-A fork PR can modify workflow files in its own branch; whether such a run reaches the self-hosted runner depends on the repository's fork-PR approval policy (set to `all_external_contributors` by ENG-011). This workflow's own guards do not cover that case.
+The first version triggered on `pull_request: closed`. For `pull_request` events, `closed` included, GitHub runs the workflow file from the PR itself, so a fork PR could rewrite `archive-records.yml`, drop the `if:` guard, and run its own job on the self-hosted runner with the maintainer's local `gh`/`agy` credentials. Only the fork-PR approval policy (`all_external_contributors`, ENG-011) stood in the way, and it is unclear whether it covers `closed` events. Raised by the ENG-011 session and approved by the maintainer; changed as follows:
+
+- `on: push: branches: [main]` plus `workflow_dispatch` (`pr` input). Both always run the workflow file from `main`. On push the script runs with `--commit $GITHUB_SHA` and finds the PR with `gh api repos/<repo>/commits/<sha>/pulls`, keeping only a PR whose `merge_commit_sha` is that sha, that is merged and whose base is `main`; exactly one must match. Anything else (a direct push, the archive commit itself) exits 0 with no commit.
+- The job's `if:` adds `github.triggering_actor == github.repository_owner`, so jobs on this runner stay limited to the owner if collaborators are added later.
+- Loop: the archive commit is itself a push to `main`. GitHub does not start push workflows for a `[skip ci]` commit; the job's `if:` checks `!contains(github.event.head_commit.message, '[skip ci]')` too; and if it ran anyway, the commit is not a PR merge (skipped) and the input digest makes it a no-op.
+- The fork check stays in the script (`isCrossRepository`): a fork PR that the owner merges is not archived.
+
+A fork PR can still add a new workflow file of its own that targets the runner; that is the general self-hosted risk covered by the fork-PR approval policy in `docs/self-hosted-runner.md`, not by this workflow.

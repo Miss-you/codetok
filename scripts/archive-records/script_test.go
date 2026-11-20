@@ -53,6 +53,7 @@ set -e
 d=$(dirname "$0")
 case "$1 $2" in
   "pr view") cat "$d/pr-$3.json" ;;
+  "api repos/"*/pulls) cat "$d/pulls.json" ;;
   "api --paginate") n=$(sed -E 's#.*/issues/([0-9]+)/comments#\1#' <<<"$3"); cat "$d/comments-$n.json" ;;
   *) echo "unexpected gh call: $*" >&2; exit 9 ;;
 esac
@@ -105,8 +106,19 @@ func (e *scriptEnv) setAI(out string) {
 }
 
 func (e *scriptEnv) run(n int) (string, error) {
+	return e.runArgs("--pr", itoa(n))
+}
+
+// setPulls sets what GitHub answers for repos/.../commits/<sha>/pulls.
+func (e *scriptEnv) setPulls(body string) {
+	if err := os.WriteFile(filepath.Join(e.stubs, "pulls.json"), []byte(body), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *scriptEnv) runArgs(args ...string) (string, error) {
 	script, _ := filepath.Abs("../archive-records.sh")
-	cmd := exec.Command("bash", script, "--pr", itoa(n))
+	cmd := exec.Command("bash", append([]string{script}, args...)...)
 	cmd.Dir = e.clone
 	cmd.Env = append(os.Environ(),
 		"PATH="+e.stubs+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -170,6 +182,37 @@ func TestArchiveScriptEndToEnd(t *testing.T) {
 		out, err := e.run(57)
 		if err != nil || e.originHead() != after || e.acpxCalls() != 1 || !strings.Contains(out, "already holds") {
 			t.Fatalf("rerun: err=%v head changed=%v acpx=%d\n%s", err, e.originHead() != after, e.acpxCalls(), out)
+		}
+	})
+
+	t.Run("push of a merge commit finds its PR", func(t *testing.T) {
+		// Same PR as above, found from the push sha: the digest makes it a no-op.
+		e.setPulls(`[{"number":99,"merge_commit_sha":"` + strings.Repeat("0", 40) + `","merged_at":"2026-11-20T00:00:00Z","base":{"ref":"main"}},
+		           {"number":57,"merge_commit_sha":"` + e.merge + `","merged_at":"2026-11-20T00:00:00Z","base":{"ref":"main"}}]`)
+		out, err := e.runArgs("--commit", e.merge)
+		if err != nil || e.originHead() != after || e.acpxCalls() != 1 || !strings.Contains(out, "merge of PR #57") || !strings.Contains(out, "already holds") {
+			t.Fatalf("err=%v\n%s", err, out)
+		}
+	})
+
+	t.Run("push that is not a PR merge is skipped", func(t *testing.T) {
+		for name, pulls := range map[string]string{
+			"direct push":  `[]`,
+			"open PR":      `[{"number":57,"merge_commit_sha":"` + e.merge + `","merged_at":null,"base":{"ref":"main"}}]`,
+			"other branch": `[{"number":57,"merge_commit_sha":"` + e.merge + `","merged_at":"2026-11-20T00:00:00Z","base":{"ref":"dev"}}]`,
+			"other sha":    `[{"number":57,"merge_commit_sha":"` + strings.Repeat("1", 40) + `","merged_at":"2026-11-20T00:00:00Z","base":{"ref":"main"}}]`,
+		} {
+			e.setPulls(pulls)
+			out, err := e.runArgs("--commit", after)
+			if err != nil || e.originHead() != after || !strings.Contains(out, "skipped") {
+				t.Fatalf("%s: err=%v\n%s", name, err, out)
+			}
+		}
+		if out, err := e.runArgs("--commit", "abc"); err == nil || !strings.Contains(out, "full commit sha") {
+			t.Fatalf("short sha accepted: %v\n%s", err, out)
+		}
+		if out, err := e.runArgs("--commit", after, "--pr", "57"); err == nil || !strings.Contains(out, "usage") {
+			t.Fatalf("--commit with --pr accepted: %v\n%s", err, out)
 		}
 	})
 

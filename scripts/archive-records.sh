@@ -2,11 +2,16 @@
 # Archive the process records of a merged PR into docs/changes/<task-id>/ on main.
 #
 #   scripts/archive-records.sh [options] --pr <number>
+#   scripts/archive-records.sh [options] --commit <sha>
 #
-# Run by .github/workflows/archive-records.yml on the self-hosted runner after a
-# PR merges, or by hand from a clean checkout of this repository.
+# Run by .github/workflows/archive-records.yml on the self-hosted runner for each
+# push to main (with --commit), or by hand from a clean checkout of this
+# repository.
 #
 # Steps:
+#   0. With --commit, find the PR that was merged into main as that commit. A
+#      push that is not a PR merge (a direct push, or an archive commit) is
+#      skipped: exit 0, no commit.
 #   1. Read the PR and its comments with gh. A PR from a fork, a PR that is not
 #      merged into main, or a PR without a records comment
 #      (<!-- codetok-records:<task-id> --> by an owner, member or collaborator)
@@ -24,7 +29,9 @@
 #      credentials. No token is read or printed by this script.
 #
 # Options:
-#   --pr <number>   The merged PR to archive (required).
+#   --pr <number>   The merged PR to archive.
+#   --commit <sha>  Archive the PR whose merge commit on main is <sha> (one of
+#                   --pr and --commit is required).
 #   --no-push       Commit in the temporary worktree but do not push; print the
 #                   worktree path and keep it.
 #   --dry-run       Stop after step 2 and print the prompt path and acpx command.
@@ -52,17 +59,19 @@ die() { printf 'archive-records: %s\n' "$1" >&2; exit "${2:-1}"; }
 say() { printf 'archive-records: %s\n' "$1" >&2; }
 need_value() { [[ $# -ge 2 ]] || die "$1 needs a value" 2; }
 
-pr='' push=1 dry_run=0
+pr='' commit='' push=1 dry_run=0
 while [[ $# -gt 0 ]]; do
     case $1 in
         --pr) need_value "$@"; pr=$2; [[ $pr =~ ^[0-9]+$ ]] || die "--pr needs a number" 2; shift 2 ;;
+        --commit) need_value "$@"; commit=$2; [[ $commit =~ ^[0-9a-f]{40}$ ]] || die "--commit needs a full commit sha" 2; shift 2 ;;
         --no-push) push=0; shift ;;
         --dry-run) dry_run=1; shift ;;
         -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown argument $1" 2 ;;
     esac
 done
-[[ -n $pr ]] || die "usage: scripts/archive-records.sh [--no-push] [--dry-run] --pr <number>" 2
+[[ -n $pr || -n $commit ]] && [[ -z $pr || -z $commit ]] \
+    || die "usage: scripts/archive-records.sh [--no-push] [--dry-run] (--pr <number> | --commit <sha>)" 2
 
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is not on PATH." 127; }
 need gh; need git; need python3
@@ -105,6 +114,24 @@ else
     unset ALL_PROXY all_proxy
     export HTTPS_PROXY=$proxy HTTP_PROXY=$proxy https_proxy=$proxy http_proxy=$proxy
     export NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,::1,.local} no_proxy=${NO_PROXY:-localhost,127.0.0.1,::1,.local}
+fi
+
+# 0. The PR behind a push to main.
+if [[ -n $commit ]]; then
+    gh api "repos/$repo_slug/commits/$commit/pulls" >"$work/pulls.json" \
+        || die "cannot list the PRs of commit $commit with gh"
+    pr=$(python3 -c '
+import json, sys
+pulls, sha, branch = json.load(open(sys.argv[1], encoding="utf-8")), sys.argv[2], sys.argv[3]
+hits = [p["number"] for p in pulls
+        if p.get("merge_commit_sha") == sha and p.get("merged_at") and (p.get("base") or {}).get("ref") == branch]
+print(hits[0] if len(hits) == 1 else "")
+' "$work/pulls.json" "$commit" "$branch")
+    if [[ -z $pr ]]; then
+        say "commit $commit is not the merge commit of exactly one PR into $branch; skipped"
+        exit 0
+    fi
+    say "commit $commit is the merge of PR #$pr"
 fi
 
 # 1. PR and comments.

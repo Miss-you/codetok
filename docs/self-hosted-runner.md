@@ -61,6 +61,12 @@ jobs:
 Add `github.repository == 'Miss-you/codetok'` as well when the job should do nothing in
 forks of the repository.
 
+Prefer `push` to `main` over `pull_request: closed` for "after merge" jobs: for every
+`pull_request` event, `closed` included, GitHub runs the workflow file from the PR, while a
+`push` to `main` always runs the file from `main` (`archive-records.yml` does this). Jobs on
+this runner should also carry `github.triggering_actor == github.repository_owner` in their
+`if:`, so they keep running only for the owner if collaborators are added later.
+
 **The guard is hygiene, not the security boundary.** For `pull_request` events GitHub
 runs the workflow files from the PR's merge commit, so a fork PR can delete the `if:` or
 add its own job with `runs-on: [self-hosted, ...]`. GitHub advises against self-hosted

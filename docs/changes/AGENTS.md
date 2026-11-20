@@ -5,11 +5,11 @@ This directory holds the process records of merged task PRs, one directory per t
 ## How a directory gets here
 
 1. While delivering a task, the agent posts one PR comment marked `<!-- codetok-records:<task-id> -->` with `scripts/post-records-comment.sh`. It lists the process files (`workspace/<task-id>/`, `openspec/changes/<change>/`, `docs/plans/...`) and may carry uncommitted notes in collapsed blocks. Rerunning the script edits that comment; it never adds a second one.
-2. When the PR merges, the workflow runs `scripts/archive-records.sh --pr <number>` on the self-hosted runner (`runs-on: [self-hosted, codetok-local, ai]`).
+2. When the PR merges, the push to `main` starts the workflow on the self-hosted runner (`runs-on: [self-hosted, codetok-local, ai]`). It runs `scripts/archive-records.sh --commit <sha>`, which looks up the PR merged as that commit. The workflow triggers on `push` to `main` (never `pull_request`, so the workflow file always comes from `main`), and only runs when the repository owner triggered it.
 3. The script copies the listed files byte for byte from the merge commit into `<task-id>/raw/`. agy (through acpx, read-only) only writes a summary in a fixed JSON schema; the script validates it and renders `README.md`. Invalid output fails the run and writes nothing.
 4. One commit lands on `main`: `docs: archive <task-id> records (#<PR>) [skip ci]`.
 
-PRs without a records comment, PRs from forks, and comments from users who are not owners, members or collaborators are skipped.
+Pushes that are not a PR merge, PRs without a records comment, PRs from forks, and comments from users who are not owners, members or collaborators are skipped.
 
 ## Layout
 
