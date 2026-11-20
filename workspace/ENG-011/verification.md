@@ -46,6 +46,18 @@ Two launchd-environment problems were found by attempts 1 and 2 and fixed on the
 
 Credential scan of the attempt-3 log (`gh run view --log`): searched for `ghs_|gho_|ghp_|github_pat|bearer|password|ya29.|refresh_token|access_token`. The only hit is the literal `$GITHUB_PATH` in the PATH step, a false positive. The checkout auth header appears only as GitHub's masked `AUTHORIZATION: basic ***`. The agy step prints only `agy call: PASS`.
 
+## Post-merge run from `main`
+
+PR #61 merged as `56632f8`. Then:
+
+```bash
+gh workflow run runner-smoke.yml -R Miss-you/codetok
+```
+
+Run: https://github.com/Miss-you/codetok/actions/runs/44763322822 (event `workflow_dispatch`, branch `main`, sha `56632f8`): **success**. Every step passed: checkout, Pin tool PATH, Check tools, `make build`, `make test`, `ai-review.sh --dry-run`, `agy -p minimal call`. This confirms the merged workflow is `workflow_dispatch`-only and works as-is.
+
+Before merge, `gh workflow run` returned HTTP 422 ("Workflow does not have 'workflow_dispatch' trigger"), because GitHub dispatches from the default branch's copy of the workflow.
+
 ## Local rehearsal (before the runner existed)
 
 - `env -i HOME USER PATH=/usr/bin:/bin:~/.local/bin AI_REVIEW_PROXY=http://127.0.0.1:7890 bash -e <agy step>` → `agy call: PASS`.
