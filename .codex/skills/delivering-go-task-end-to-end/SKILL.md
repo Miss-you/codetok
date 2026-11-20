@@ -248,8 +248,9 @@ OpenSpec 相关 sub-skill 在任务改变产品行为或规格时启用；纯文
 
 1. 如有 OpenSpec change，按实际需要做 `openspec-sync-specs` / `openspec-archive-change`
 2. 更新任务板，把任务标成 `done`
-3. 确认 workspace 产物完整
-4. 把剩余风险、延后项写入 `todo.md` 或任务板 `Notes`
+3. PR 已开时，按下面「发过程记录评论」发或更新记录评论
+4. 确认 workspace 产物完整
+5. 把剩余风险、延后项写入 `todo.md` 或任务板 `Notes`
 
 ## Acceptance Criteria
 
@@ -263,6 +264,7 @@ OpenSpec 相关 sub-skill 在任务改变产品行为或规格时启用；纯文
 - 任务板状态为 `done`
 - workspace、spec、代码和验证证据一致
 - 遗留项已落盘，而不是只存在聊天里
+- PR 上有且只有一条 `<!-- codetok-records:<task-id> -->` 记录评论，列出的文件与本次过程文件一致
 
 ## 常见错误
 
@@ -275,3 +277,17 @@ OpenSpec 相关 sub-skill 在任务改变产品行为或规格时启用；纯文
 ## 交接
 
 任务关闭后，如果已经有 PR 或准备开 PR，下一步使用 `monitoring-pr-ai-reviews`。
+
+### 发过程记录评论（每个 PR 一条）
+
+开 PR 之后，用一条带标记的 PR 评论把本次的过程文件交给合并后的归档流程（#57）。开发流程只做这一步，不提交归档文件，不改变 PR head：
+
+```bash
+scripts/post-records-comment.sh --pr <number> --task <task-id> \
+    workspace/<task-id>/ docs/plans/<board>.md [openspec/changes/<change>/]
+```
+
+- 列出本次相关的过程文件：`workspace/<task-id>/`、对应 OpenSpec change 目录、改过的 `docs/plans/` 文件。目录以 `/` 结尾表示目录下所有文件。只能列 `workspace/`、`openspec/changes/`、`docs/plans/` 下的路径，且这些文件必须已经提交在 PR 里。
+- 没有提交进仓库的过程内容（例如会话里的笔记）用 `--inline NAME=FILE` 放进折叠块。评论是公开的，发之前确认里面没有账号、令牌或其他凭据；单条评论上限约 65,536 字符，超出时把文件提交到 `workspace/<task-id>/` 再列路径。
+- 评论带 `<!-- codetok-records:<task-id> -->` 标记。脚本发现 PR 上已有标记评论时会就地编辑，所以合并前代码或文件列表变了，重跑同一条命令即可，PR 上始终只有一条。
+- 合并后，`.github/workflows/archive-records.yml` 在 self-hosted runner 上运行 `scripts/archive-records.sh`：按路径把文件原样复制到 `main` 的 `docs/changes/<task-id>/raw/`，再由 acpx + agy 按固定 schema 写摘要。没有标记评论的 PR 会被跳过。归档目录的说明见 `docs/changes/AGENTS.md`。

@@ -1,0 +1,66 @@
+# Archive a merged PR's process records into docs/changes/<task-id>/ on main (#57).
+#
+# The delivery flow leaves one PR comment marked <!-- codetok-records:<task-id> -->
+# that lists the process files. After the PR merges, scripts/archive-records.sh
+# copies those files verbatim, asks agy (through acpx) for a schema-checked
+# summary, and pushes one commit to main with the runner user's own git
+# credentials (gh's git credential helper). See docs/changes/AGENTS.md.
+#
+# Loop and safety rules (asserted by scripts/archive-records/workflow_test.go):
+# - Triggers only on pull_request "closed" and on workflow_dispatch; never on push,
+#   so the archive commit cannot start this workflow again.
+# - The archive commit message ends in "[skip ci]", so push-triggered workflows on
+#   main (CI, any future AI review) do not run for it. AI review itself
+#   (scripts/ai-review.sh) only runs for PR heads, and the archive never opens a PR.
+# - PRs from forks never run here: the job checks the head repository, and the
+#   script checks isCrossRepository again.
+name: Archive records
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Number of the merged PR to archive
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archive-records
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    name: Archive records
+    if: >-
+      github.repository == 'Miss-you/codetok' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.pull_request.merged == true &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: [self-hosted, codetok-local, ai]
+    timeout-minutes: 30
+    env:
+      AI_REVIEW_PROXY: ${{ vars.AI_REVIEW_PROXY || 'http://127.0.0.1:7890' }}
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+    steps:
+      - name: Pin tool PATH
+        run: |
+          for dir in /opt/homebrew/sbin /opt/homebrew/bin "$HOME/go/bin" "$HOME/.local/bin"; do
+            [ -d "$dir" ] && echo "$dir" >> "$GITHUB_PATH"
+          done
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # Push with the runner user's credentials, not GITHUB_TOKEN.
+          persist-credentials: false
+      - name: Archive
+        run: |
+          case "$PR_NUMBER" in ''|*[!0-9]*) echo "PR number must be digits" >&2; exit 2 ;; esac
+          git config user.name >/dev/null || git config user.name "codetok archive"
+          git config user.email >/dev/null || git config user.email "codetok-archive@users.noreply.github.com"
+          scripts/archive-records.sh --pr "$PR_NUMBER"
