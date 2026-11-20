@@ -1154,9 +1154,10 @@ func TestAntigravityProvider_DailyAndSessionJSON(t *testing.T) {
 			{Model: "gemini-4-hydrogen", Time: day2, Input: 50, Output: 20, CacheRead: 1100, CacheWrite: 5},
 		},
 	})
-	providerArgs := []string{"--antigravity-dir", root, "--kimi-dir", emptyDir(t)}
+	empty := emptyDir(t)
+	providerArgs := []string{"--antigravity-dir", root, "--kimi-dir", empty, "--claude-dir", empty, "--codex-dir", empty, "--cursor-dir", empty}
 
-	output := runCodetok(t, bin, isolatedArgs(t, append(providerArgs, "daily", "--json", "--all", "--timezone", "UTC")...)...)
+	output := runCodetok(t, bin, append(providerArgs, "daily", "--json", "--all", "--timezone", "UTC")...)
 	var daily []provider.DailyStats
 	if err := json.Unmarshal([]byte(output), &daily); err != nil {
 		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
@@ -1174,7 +1175,7 @@ func TestAntigravityProvider_DailyAndSessionJSON(t *testing.T) {
 		}
 	}
 
-	output = runCodetok(t, bin, isolatedArgs(t, append(providerArgs, "daily", "--json", "--all", "--group-by", "model")...)...)
+	output = runCodetok(t, bin, append(providerArgs, "daily", "--json", "--all", "--group-by", "model")...)
 	if err := json.Unmarshal([]byte(output), &daily); err != nil {
 		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
 	}
@@ -1184,7 +1185,7 @@ func TestAntigravityProvider_DailyAndSessionJSON(t *testing.T) {
 		}
 	}
 
-	output = runCodetok(t, bin, isolatedArgs(t, append(providerArgs, "session", "--json", "--since", "2026-11-01", "--until", "2026-11-30")...)...)
+	output = runCodetok(t, bin, append(providerArgs, "session", "--json", "--since", "2026-11-01", "--until", "2026-11-30")...)
 	var sessions []struct {
 		SessionID    string              `json:"session_id"`
 		ProviderName string              `json:"provider"`

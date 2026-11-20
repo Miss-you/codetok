@@ -375,3 +375,73 @@ func TestParseProtoMalformed(t *testing.T) {
 		t.Error("decodeGeneration accepted a malformed chat_model")
 	}
 }
+
+func TestSQLiteURI(t *testing.T) {
+	cases := map[string]string{
+		"/tmp/a b#c.db": "file:///tmp/a%20b%23c.db?immutable=1",
+		"C:/Users/x.db": "file:///C:/Users/x.db?immutable=1",
+	}
+	for in, want := range cases {
+		if got := sqliteURI(in, "immutable=1"); got != want {
+			t.Errorf("sqliteURI(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSessionModelTieBreaksByName(t *testing.T) {
+	s := sessionFromEvents([]provider.UsageEvent{
+		{SessionID: "s", ModelName: "zeta", Timestamp: t1},
+		{SessionID: "s", ModelName: "alpha", Timestamp: t2},
+	})
+	if s.ModelName != "alpha" {
+		t.Errorf("ModelName = %q, want alpha", s.ModelName)
+	}
+}
+
+func TestDefaultRootsMergeCLIAndIDE(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, root := range []string{"antigravity-cli", "antigravity"} {
+		dir := filepath.Join(home, ".gemini", root, "conversations")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		createConversationDB(t, filepath.Join(dir, root+".db"), sampleConv()).Close()
+	}
+	sessions, err := (&Provider{}).CollectSessions("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("got %d sessions, want one per root", len(sessions))
+	}
+}
+
+func TestRangeKeepsFileWithRecentWAL(t *testing.T) {
+	root := writeRoot(t, []fixtureConv{sampleConv()}, nil)
+	path := filepath.Join(root, "conversations", "conv-a.db")
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	// An empty WAL with a recent mtime: the file was written recently.
+	if err := os.WriteFile(path+"-wal", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events, err := (&Provider{}).CollectUsageEventsInRange(root, provider.UsageEventCollectOptions{Since: time.Now().Add(-time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2 (WAL mtime is in range)", len(events))
+	}
+}
+
+func TestRejectsOversizedCounts(t *testing.T) {
+	if _, _, _, ok := decodeGeneration(encodeGeneration(genSpec{input: 1 << 40, output: 1, steps: []uint64{1}})); ok {
+		t.Error("decodeGeneration accepted a token count above MaxInt32")
+	}
+	if _, err := parseProto(binary.AppendUvarint(nil, uint64(maxFieldNumber+1)<<3)); err == nil {
+		t.Error("parseProto accepted a field number above the protobuf maximum")
+	}
+}

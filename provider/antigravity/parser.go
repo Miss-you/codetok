@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -248,8 +249,13 @@ func openReadOnly(path string) (*sql.DB, func(), error) {
 	return db, func() { db.Close(); removeDir() }, nil
 }
 
+// sqliteURI builds a file: URI; Windows paths such as C:\x become file:///C:/x.
 func sqliteURI(path, query string) string {
-	return (&url.URL{Scheme: "file", Path: path, RawQuery: query}).String()
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p, RawQuery: query}).String()
 }
 
 func copyFile(src, dst string) error {
@@ -390,11 +396,20 @@ func decodeGeneration(data []byte) (usage provider.TokenUsage, model string, ste
 	if err != nil {
 		return usage, "", nil, false
 	}
+	counts := [4]uint64{
+		uintField(u, usageInput), uintField(u, usageOutput),
+		uintField(u, usageCacheRead), uintField(u, usageCacheWrite),
+	}
+	for _, c := range counts {
+		if c > math.MaxInt32 { // a single call never comes close; treat as corrupt
+			return usage, "", nil, false
+		}
+	}
 	usage = provider.TokenUsage{
-		InputOther:       int(uintField(u, usageInput)),
-		Output:           int(uintField(u, usageOutput)),
-		InputCacheRead:   int(uintField(u, usageCacheRead)),
-		InputCacheCreate: int(uintField(u, usageCacheWrite)),
+		InputOther:       int(counts[0]),
+		Output:           int(counts[1]),
+		InputCacheRead:   int(counts[2]),
+		InputCacheCreate: int(counts[3]),
 	}
 	if usage.Total() == 0 {
 		return usage, "", nil, false

@@ -7,6 +7,8 @@ import (
 
 var errMalformedProto = errors.New("malformed protobuf")
 
+const maxFieldNumber = 1<<29 - 1
+
 // protoField is one top-level field of a protobuf message.
 type protoField struct {
 	num  int
@@ -25,10 +27,10 @@ func parseProto(b []byte) ([]protoField, error) {
 			return nil, errMalformedProto
 		}
 		b = b[n:]
-		f := protoField{num: int(key >> 3), wire: int(key & 7)}
-		if f.num <= 0 {
+		if num := key >> 3; num == 0 || num > maxFieldNumber {
 			return nil, errMalformedProto
 		}
+		f := protoField{num: int(key >> 3), wire: int(key & 7)}
 		switch f.wire {
 		case 0:
 			v, n := binary.Uvarint(b)

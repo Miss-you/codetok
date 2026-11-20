@@ -265,7 +265,8 @@ codetok/
 │   ├── registry.go         # Provider 自动注册（init()）
 │   ├── parallel.go         # 有界并行解析工具
 │   ├── antigravity/
-│   │   └── parser.go       # Antigravity 会话数据库解析器
+│   │   ├── parser.go       # Antigravity 会话数据库解析器
+│   │   └── wire.go         # 最小 protobuf wire 解析
 │   ├── kimi/
 │   │   └── parser.go       # Kimi Code wire.jsonl 解析器
 │   ├── claude/

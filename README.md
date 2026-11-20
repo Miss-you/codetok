@@ -291,7 +291,8 @@ codetok/
 │   ├── registry.go         # Provider auto-registration via init()
 │   ├── parallel.go         # Bounded parallel parsing helper
 │   ├── antigravity/
-│   │   └── parser.go       # Antigravity conversation DB parser
+│   │   ├── parser.go       # Antigravity conversation DB parser
+│   │   └── wire.go         # Minimal protobuf wire reader
 │   ├── kimi/
 │   │   └── parser.go       # Kimi Code wire.jsonl parser
 │   ├── claude/
