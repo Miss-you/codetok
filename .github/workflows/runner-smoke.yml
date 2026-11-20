@@ -1,0 +1,94 @@
+# Smoke test for the self-hosted macOS runner (ENG-011, issue #56).
+#
+# Manual trigger only. It proves that the runner service on the maintainer's Mac
+# can build and test codetok and can call the local AI tools (acpx / agy) with the
+# environment launchd gives it. See docs/self-hosted-runner.md.
+#
+# Security: workflow_dispatch can only be started by users with write access, so
+# pull requests from forks can never reach this runner through this workflow.
+name: Runner smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Smoke (self-hosted, codetok-local, ai)
+    # Forks that copy this workflow must not try to schedule onto a runner they do not have.
+    if: github.repository == 'Miss-you/codetok'
+    runs-on: [self-hosted, macOS, ARM64, codetok-local, ai]
+    timeout-minutes: 30
+    env:
+      # Same convention as scripts/ai-review.sh: agy ignores the macOS system proxy.
+      # Override with the repository variable AI_REVIEW_PROXY ("none" = direct).
+      AI_REVIEW_PROXY: ${{ vars.AI_REVIEW_PROXY || 'http://127.0.0.1:7890' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # launchd starts the runner with a minimal environment. The runner adds the
+      # PATH captured in ~/actions-runner/codetok/.path at config time, but jobs pin
+      # the tool directories explicitly so they do not depend on that snapshot.
+      - name: Pin tool PATH
+        run: |
+          for dir in /opt/homebrew/sbin /opt/homebrew/bin "$HOME/go/bin" "$HOME/.local/bin"; do
+            if [ -d "$dir" ]; then echo "$dir" >> "$GITHUB_PATH"; fi
+          done
+
+      # Logs of a public repository are world-readable: report found/missing only,
+      # not the user name, home directory or PATH.
+      - name: Check tools
+        run: |
+          missing=0
+          for tool in go make git python3 gh acpx agy; do
+            if command -v "$tool" >/dev/null 2>&1; then echo "$tool: found"; else echo "$tool: MISSING"; missing=1; fi
+          done
+          go version
+          exit "$missing"
+
+      - name: make build
+        run: make build
+
+      - name: make test
+        run: make test
+
+      - name: ai-review.sh --dry-run
+        run: |
+          base=$(git merge-base origin/main HEAD)
+          if [ "$base" = "$(git rev-parse HEAD)" ]; then
+            base=HEAD~1  # dispatched on main (or a branch behind it): review the last commit
+          fi
+          AI_REVIEW_OUT_DIR="$RUNNER_TEMP/ai-review" scripts/ai-review.sh --dry-run "$base" HEAD
+
+      - name: agy -p minimal call
+        working-directory: ${{ runner.temp }}
+        run: |
+          if [ "$AI_REVIEW_PROXY" != none ]; then
+            export HTTPS_PROXY="$AI_REVIEW_PROXY" HTTP_PROXY="$AI_REVIEW_PROXY"
+            export NO_PROXY=localhost,127.0.0.1,::1,.local
+          fi
+          out=$(agy -p 'Reply with exactly this JSON and nothing else: {"ok": true}' \
+            --output-format json --print-timeout 180s)
+          # Print only pass/fail, never the raw payload or model-controlled text
+          # (which could inject ::workflow-commands:: into the log).
+          python3 -c '
+          import json, sys
+          data = json.loads(sys.argv[1])
+          status = data.get("status")
+          try:
+              answer = json.loads(data.get("response", "").strip().strip("`").removeprefix("json"))
+          except ValueError:
+              answer = None
+          ok = status == "SUCCESS" and answer == {"ok": True}
+          print("agy call: PASS" if ok else "agy call: FAIL (status SUCCESS=%s, answer matched=%s)" % (status == "SUCCESS", answer == {"ok": True}))
+          sys.exit(0 if ok else 1)
+          ' "$out"
