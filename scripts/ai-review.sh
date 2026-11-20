@@ -55,12 +55,14 @@ die() { printf 'ai-review: %s\n' "$1" >&2; exit "${2:-1}"; }
 # @file paths are relative to the caller's directory, not the repository root.
 arg_text() { if [[ $1 == @* ]]; then (cd "$caller_dir" && cat "${1#@}"); else printf '%s' "$1"; fi; }
 
+need_value() { [[ $# -ge 2 ]] || die "$1 needs a value" 2; }
+
 pr='' what='' requirements='' dry_run=0 positional=()
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --pr) pr=${2:?--pr needs a number}; [[ $pr =~ ^[0-9]+$ ]] || die "--pr needs a number" 2; shift 2 ;;
-        --what) what=$(arg_text "${2:?--what needs a value}"); shift 2 ;;
-        --requirements) requirements=$(arg_text "${2:?--requirements needs a value}"); shift 2 ;;
+        --pr) need_value "$@"; pr=$2; [[ $pr =~ ^[0-9]+$ ]] || die "--pr needs a number" 2; shift 2 ;;
+        --what) need_value "$@"; what=$(arg_text "$2"); shift 2 ;;
+        --requirements) need_value "$@"; requirements=$(arg_text "$2"); shift 2 ;;
         --dry-run) dry_run=1; shift ;;
         -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown option $1" 2 ;;
@@ -82,7 +84,7 @@ else
         proxy_host=${BASH_REMATCH[2]} proxy_port=${BASH_REMATCH[3]}
         proxy_host=${proxy_host#\[}; proxy_host=${proxy_host%\]}
     else
-        die "AI_REVIEW_PROXY must look like http://host:port, got: $proxy" 2
+        die "AI_REVIEW_PROXY must look like http://host:port, got: $(sed -E 's#://[^/@]+@#://***@#' <<<"$proxy")" 2
     fi
     if [[ $dry_run -eq 0 ]]; then
         need nc
@@ -212,7 +214,8 @@ status=0
 agent_errors=$(grep -E '^(⚠|AGY_ERROR)' "$review_file" || true)
 # A turn that ended normally is a finished review: any "⚠" line before it was
 # either recovered (agy retries transient API errors) or the model's own text.
-last_line=$(grep -v '^[[:space:]]*$' "$review_file" | tail -n 1 || true)
+last_line=$(tr -d '\r' <"$review_file" | grep -v '^[[:space:]]*$' | tail -n 1 || true)
+last_line=${last_line%"${last_line##*[![:space:]]}"}
 if [[ $status -eq 0 && $last_line == '[done] end_turn' ]]; then
     if [[ -n $agent_errors ]]; then
         printf 'ai-review: the review completed; %s "⚠" line(s) before it were not fatal, first: %s\n' \
@@ -229,11 +232,11 @@ if grep -q 'User location is not supported' <<<"$diag"; then
     else
         hint="the API rejected the request's region. The proxy ($shown_proxy) exits in an unsupported region; switch the proxy node (for example to the US) and rerun."
     fi
-elif grep -q 'is not recognized as a known model\|did not advertise that model' <<<"$diag"; then
+elif grep -Eq 'is not recognized as a known model|did not advertise that model' <<<"$diag"; then
     hint="agy did not offer the model. Without a working proxy agy cannot load its model list; check AI_REVIEW_PROXY and AI_REVIEW_MODEL."
 elif grep -q 'PERMISSION_DENIED' <<<"$diag"; then
     hint="the model asked for a denied permission (usually a command or a write) and acpx stopped. Rerun; if it repeats, tighten the prompt."
-elif [[ $status -ne 0 ]] && grep -qi 'timed out\|timeout' <<<"$diag"; then
+elif [[ $status -ne 0 ]] && grep -Eqi 'timed out|timeout' <<<"$diag"; then
     hint="no answer within ${AI_REVIEW_TIMEOUT:-1200}s. Check the proxy, or raise AI_REVIEW_TIMEOUT."
 elif [[ -n $agent_errors ]]; then
     hint="acpx reported an agent error: $(head -n 1 <<<"$agent_errors")"
