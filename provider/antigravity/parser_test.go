@@ -270,6 +270,7 @@ func TestRootWithoutConversations(t *testing.T) {
 func TestDefaultRootsUseHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	cli := filepath.Join(home, ".gemini", "antigravity-cli")
 	if err := os.MkdirAll(filepath.Join(cli, "conversations"), 0o755); err != nil {
 		t.Fatal(err)
@@ -401,6 +402,7 @@ func TestSessionModelTieBreaksByName(t *testing.T) {
 func TestDefaultRootsMergeCLIAndIDE(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	for _, root := range []string{"antigravity-cli", "antigravity"} {
 		dir := filepath.Join(home, ".gemini", root, "conversations")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -443,5 +445,25 @@ func TestRejectsOversizedCounts(t *testing.T) {
 	}
 	if _, err := parseProto(binary.AppendUvarint(nil, uint64(maxFieldNumber+1)<<3)); err == nil {
 		t.Error("parseProto accepted a field number above the protobuf maximum")
+	}
+}
+
+func TestRelativeDirOverride(t *testing.T) {
+	root := writeRoot(t, []fixtureConv{sampleConv()}, nil)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Dir(root)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	events, err := (&Provider{}).CollectUsageEvents(filepath.Base(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events from a relative dir, want 2", len(events))
 	}
 }

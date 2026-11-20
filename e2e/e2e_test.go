@@ -1175,11 +1175,15 @@ func TestAntigravityProvider_DailyAndSessionJSON(t *testing.T) {
 		}
 	}
 
-	output = runCodetok(t, bin, append(providerArgs, "daily", "--json", "--all", "--group-by", "model")...)
-	if err := json.Unmarshal([]byte(output), &daily); err != nil {
+	output = runCodetok(t, bin, append(providerArgs, "daily", "--json", "--all", "--group-by", "model", "--timezone", "UTC")...)
+	var byModel []provider.DailyStats
+	if err := json.Unmarshal([]byte(output), &byModel); err != nil {
 		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, output)
 	}
-	for _, d := range daily {
+	if len(byModel) != 2 {
+		t.Fatalf("expected 2 model rows, got %d: %s", len(byModel), output)
+	}
+	for _, d := range byModel {
 		if d.Group != "gemini-4-hydrogen" {
 			t.Errorf("model group = %q, want gemini-4-hydrogen", d.Group)
 		}

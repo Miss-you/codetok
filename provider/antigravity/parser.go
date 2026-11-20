@@ -29,6 +29,8 @@ func init() {
 // Provider implements provider.Provider for Antigravity.
 type Provider struct{}
 
+var _ provider.RangeAwareUsageEventProvider = (*Provider)(nil)
+
 // Name returns the provider name.
 func (p *Provider) Name() string {
 	return providerName
@@ -137,7 +139,7 @@ func discover(baseDir string) ([]conversation, error) {
 	roots := defaultRoots()
 	if baseDir != "" {
 		if _, err := os.Stat(baseDir); err != nil {
-			return nil, err
+			return nil, err // unwrapped: cmd skips providers via os.IsNotExist
 		}
 		roots = []string{baseDir}
 	}
@@ -216,19 +218,59 @@ func loadTitles(path string) map[string]string {
 	return titles
 }
 
+// maxCopyAttempts bounds retries when a running agy writes while we copy.
+const maxCopyAttempts = 3
+
 // openReadOnly opens an Antigravity SQLite file without writing to or locking
 // it. With an empty WAL the file is opened immutable; otherwise the database
 // and WAL are copied to a temp directory so the latest writes are included.
+// The two files are copied separately, so a copy is used only if neither file
+// changed meanwhile (a checkpoint in between would pair a WAL with the wrong
+// database).
 func openReadOnly(path string) (*sql.DB, func(), error) {
-	wal, err := os.Stat(path + "-wal")
-	if err != nil || wal.Size() == 0 {
-		db, err := sql.Open("sqlite", sqliteURI(path, "immutable=1"))
-		if err != nil {
-			return nil, nil, fmt.Errorf("opening %s: %w", path, err)
-		}
-		return db, func() { db.Close() }, nil
+	abs, err := filepath.Abs(path) // file: URIs need absolute paths
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving %s: %w", path, err)
 	}
+	for attempt := 0; attempt < maxCopyAttempts; attempt++ {
+		before := stampFiles(abs)
+		if before.walSize == 0 {
+			db, err := sql.Open("sqlite", sqliteURI(abs, "immutable=1"))
+			if err != nil {
+				return nil, nil, fmt.Errorf("opening %s: %w", path, err)
+			}
+			return db, func() { db.Close() }, nil
+		}
+		db, cleanup, err := openCopy(abs)
+		if err == nil && stampFiles(abs) == before {
+			return db, cleanup, nil
+		}
+		if cleanup != nil {
+			cleanup()
+		}
+	}
+	return nil, nil, fmt.Errorf("%s changed on every copy attempt", path)
+}
 
+// fileStamp identifies the state of a database and its WAL.
+type fileStamp struct {
+	dbSize, walSize   int64
+	dbMtime, walMtime int64
+}
+
+func stampFiles(path string) fileStamp {
+	var s fileStamp
+	if info, err := os.Stat(path); err == nil {
+		s.dbSize, s.dbMtime = info.Size(), info.ModTime().UnixNano()
+	}
+	if info, err := os.Stat(path + "-wal"); err == nil {
+		s.walSize, s.walMtime = info.Size(), info.ModTime().UnixNano()
+	}
+	return s
+}
+
+// openCopy copies the database and WAL to a temp directory and opens the copy.
+func openCopy(path string) (*sql.DB, func(), error) {
 	dir, err := os.MkdirTemp("", "codetok-antigravity-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating temp dir for %s: %w", path, err)
