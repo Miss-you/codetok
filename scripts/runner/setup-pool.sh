@@ -123,14 +123,24 @@ for i in $(seq 1 "$COUNT"); do
   if [ ! -f "$plist" ]; then
     run sh -c "cd '$dir' && ./svc.sh install"
     # Same fix as ENG-011: without SessionCreate the job can read the login keychain (agy).
-    run /usr/libexec/PlistBuddy -c 'Delete :SessionCreate' "$plist"
+    run sh -c "/usr/libexec/PlistBuddy -c 'Delete :SessionCreate' '$plist' || true"
     run sh -c "cd '$dir' && ./svc.sh start"
-  elif [ "$changed" = 1 ] || [ "$new" = 1 ]; then
-    busy=$(runner_busy "$name")
-    if [ "$busy" = false ]; then
-      run sh -c "cd '$dir' && ./svc.sh stop && ./svc.sh start"
-    else
-      echo "!! $name is busy=$busy: not restarting. Run later: (cd $dir && ./svc.sh stop && ./svc.sh start)"
+  else
+    # A restart skipped earlier (busy instance) is remembered, so a re-run still does it.
+    pending="$dir/.pool-restart-pending"
+    if [ "$changed" = 1 ] || [ "$new" = 1 ]; then
+      [ "$DRY_RUN" = 0 ] && touch "$pending"
+    fi
+    if [ -f "$pending" ] || { [ "$DRY_RUN" = 1 ] && [ "$changed" = 1 ]; }; then
+      busy=$(runner_busy "$name")
+      # The busy flag can lag by a few seconds behind job assignment; the job's
+      # started hook makes a killed job's leftovers harmless for the next one.
+      if [ "$busy" = false ]; then
+        run sh -c "cd '$dir' && ./svc.sh stop && ./svc.sh start"
+        [ "$DRY_RUN" = 0 ] && rm -f "$pending"
+      else
+        echo "!! $name is busy=$busy: not restarting now; re-run this script later to restart it"
+      fi
     fi
   fi
 done

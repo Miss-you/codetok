@@ -259,7 +259,7 @@ is copied to `_shared/hooks`, so a branch or PR cannot change what it executes; 
 
 | Phase | What it does |
 | --- | --- |
-| started | In `$GITHUB_WORKSPACE`: remove persisted checkout credentials (`http.*.extraheader`, `includeIf.*.path`), abort a half-done rebase/merge, `git reset --hard`, `git clean -ffdx` (also nested repos and ignored files). Keeps `.git`. Empties the workspace if it is not a git checkout. Catches leftovers when a previous job crashed. |
+| started | Wait (up to 5 min) for a cache prune on another instance to finish. In `$GITHUB_WORKSPACE`: delete `.git/hooks` and code-running git config a previous job could have planted (`core.hooksPath`, `core.fsmonitor`, credential helpers, filter/diff drivers; git runs here with hooks and fsmonitor disabled), remove persisted checkout credentials (`http.*.extraheader`, `includeIf.*.path`), abort a half-done rebase/merge, `git reset --hard`, `git clean -ffdx` (also nested repos and ignored files). Keeps `.git`. Empties the workspace if it is not a git checkout. Catches leftovers when a previous job crashed. |
 | completed | The same reset, so build outputs (`bin/`, coverage), AI scratch files and tokens do not sit on disk until the next job. Then bounded cache cleanup (below). |
 
 The runner itself empties `_work/_temp` (`$RUNNER_TEMP`) for every job; put AI output
@@ -282,8 +282,11 @@ clears a cache that is over its cap:
 | `_diag/*.log` (all instances) | age 14 days | `CODETOK_RUNNER_DIAG_MAX_AGE_DAYS` |
 
 `GOCACHE` also trims itself (Go drops entries unused for 5 days). A cache is cleared only
-when no other instance is running a job (no other `Runner.Worker` process), and only one
-instance prunes at a time (`_shared/prune.lock`); otherwise the next job retries. A cleared
+when no other instance is running a job (no other `Runner.Worker` process; if the check
+cannot find even its own worker it assumes busy), only one instance prunes at a time
+(`_shared/prune.lock`), and jobs starting meanwhile wait for the prune; otherwise the next
+job retries. Only the fixed directories under `_shared/cache` are pruned, whatever a job
+set `GOCACHE` to. Non-numeric caps fall back to the defaults. A cleared
 cache makes the next job cold, not wrong. For codetok the caches stay well under the caps:
 about 370 MB of modules and 430 MB of build cache.
 

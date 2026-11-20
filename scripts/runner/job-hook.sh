@@ -30,6 +30,18 @@ DIAG_MAX_AGE_DAYS="${CODETOK_RUNNER_DIAG_MAX_AGE_DAYS:-14}"
 
 log() { echo "[runner-hook:${phase}] $*"; }
 
+# Caps must be plain integers; anything else falls back to the default instead of
+# making the size test error out (and prune on every job).
+num_or() { case "$1" in ''|*[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac; }
+GOCACHE_MAX_MB=$(num_or "$GOCACHE_MAX_MB" 10240)
+GOMODCACHE_MAX_MB=$(num_or "$GOMODCACHE_MAX_MB" 4096)
+LINTCACHE_MAX_MB=$(num_or "$LINTCACHE_MAX_MB" 2048)
+DIAG_MAX_AGE_DAYS=$(num_or "$DIAG_MAX_AGE_DAYS" 14)
+
+# git with repository hooks and fsmonitor disabled: the previous job could have planted
+# them in the kept .git, and they must not run here.
+g() { git -C "$ws" -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"; }
+
 # under_root PATH: true when PATH is a real directory strictly inside RUNNERS_ROOT.
 # Guards every rm -rf below against an empty or unexpected path.
 under_root() {
@@ -50,20 +62,28 @@ reset_workspace() {
     log "workspace is outside the runner root, leaving it alone"
     return 0
   fi
+  case "$(cd "$ws" && pwd -P)/" in */_work/?*) ;; *)
+    log "workspace is not under a runner _work directory, leaving it alone"
+    return 0 ;;
+  esac
   if [ -d "$ws/.git" ]; then
+    # Code execution hooks a previous job could have left in the kept .git.
+    rm -rf "$ws/.git/hooks" 2>/dev/null || true
+    g config --local --name-only --get-regexp '^core\.(hookspath|fsmonitor|sshcommand|pager|editor|askpass)$|^(credential|filter|diff|merge)\..*\.(helper|clean|smudge|process|command|driver|textconv)$|^credential\.helper$' 2>/dev/null |
+      while read -r key; do g config --local --unset-all "$key" 2>/dev/null || true; done
     # Credentials actions/checkout may have persisted (persist-credentials: true): the
     # http extraheader (checkout v4) or the includeIf credentials include (v6). The
     # checkout post step removes them; this covers a job that died before its post step.
-    git -C "$ws" config --local --name-only --get-regexp '^(http\..*\.extraheader|includeif\..*\.path)$' 2>/dev/null |
-      while read -r key; do git -C "$ws" config --local --unset-all "$key" || true; done
-    git -C "$ws" rebase --abort >/dev/null 2>&1 || true
-    git -C "$ws" merge --abort >/dev/null 2>&1 || true
-    git -C "$ws" am --abort >/dev/null 2>&1 || true
-    if git -C "$ws" rev-parse --verify -q HEAD >/dev/null; then
-      git -C "$ws" reset -q --hard HEAD || log "git reset failed"
+    g config --local --name-only --get-regexp '^(http\..*\.extraheader|includeif\..*\.path)$' 2>/dev/null |
+      while read -r key; do g config --local --unset-all "$key" 2>/dev/null || true; done
+    g rebase --abort >/dev/null 2>&1 || true
+    g merge --abort >/dev/null 2>&1 || true
+    g am --abort >/dev/null 2>&1 || true
+    if g rev-parse --verify -q HEAD >/dev/null; then
+      g reset -q --hard HEAD || log "git reset failed"
     fi
     # -ffdx: also untracked nested repositories and ignored files (bin/, coverage, AI output).
-    git -C "$ws" clean -q -ffdx || log "git clean failed"
+    g clean -q -ffdx || log "git clean failed"
     log "workspace reset (git clean -ffdx, reset --hard; .git kept for incremental fetch)"
   else
     # Not a git checkout (a job that never ran actions/checkout): nothing worth keeping.
@@ -81,13 +101,28 @@ size_mb() { du -sm "$1" 2>/dev/null | awk '{print $1}'; }
 other_jobs_running() {
   local n
   n=$(pgrep -f "$RUNNERS_ROOT/[^/]*/bin/Runner.Worker" 2>/dev/null | wc -l | tr -d ' ')
-  [ "${n:-0}" -gt 1 ]
+  # Our own worker must match; if nothing matches, the pattern is wrong: assume busy.
+  [ "${n:-0}" -lt 1 ] && return 0
+  [ "$n" -gt 1 ]
+}
+
+# A prune clears whole caches; a job starting meanwhile would lose them mid-build.
+# The started hook waits (up to 5 minutes) for a running prune to finish.
+wait_for_prune() {
+  local lock="$SHARED_DIR/prune.lock" i=0
+  while [ -d "$lock" ] && [ $i -lt 60 ]; do
+    [ $i = 0 ] && log "waiting for a cache prune on another instance"
+    sleep 5; i=$((i + 1))
+  done
 }
 
 prune_dir() { # name dir cap_mb
   local name="$1" dir="$2" cap="$3" size
   [ -d "$dir" ] || return 0
   under_root "$dir" || { log "$name: not under the runner root, skipped"; return 0; }
+  case "$(cd "$dir" && pwd -P)/" in "$(cd "$SHARED_DIR/cache" && pwd -P)"/?*) ;; *)
+    log "$name: not in the shared cache directory, skipped"; return 0 ;;
+  esac
   size=$(size_mb "$dir")
   if [ "${size:-0}" -le "$cap" ]; then
     log "$name: ${size}MB <= ${cap}MB cap"
@@ -98,8 +133,11 @@ prune_dir() { # name dir cap_mb
     return 0
   fi
   chmod -R u+w "$dir" 2>/dev/null || true # module cache files are read-only
-  rm -rf "$dir" && mkdir -p "$dir"
-  log "$name: ${size}MB > ${cap}MB cap, cleared"
+  if rm -rf "$dir" 2>/dev/null && mkdir -p "$dir" 2>/dev/null; then
+    log "$name: ${size}MB > ${cap}MB cap, cleared"
+  else
+    log "$name: ${size}MB > ${cap}MB cap, clearing failed"
+  fi
 }
 
 prune_caches() {
@@ -108,14 +146,17 @@ prune_caches() {
   if [ -d "$lock" ] && [ -n "$(find "$lock" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
     rmdir "$lock" 2>/dev/null || true
   fi
+  [ -d "$SHARED_DIR/cache" ] || { log "no shared cache directory, skipped"; return 0; }
+  log "runner workers running: $(pgrep -f "$RUNNERS_ROOT/[^/]*/bin/Runner.Worker" 2>/dev/null | wc -l | tr -d ' ') (this job included)"
   if ! mkdir "$lock" 2>/dev/null; then
     log "another instance is pruning, skipped"
     return 0
   fi
   # GOCACHE also trims itself (entries unused for 5 days); the cap bounds bursts.
-  prune_dir GOCACHE "${GOCACHE:-$SHARED_DIR/cache/go-build}" "$GOCACHE_MAX_MB"
-  prune_dir GOMODCACHE "${GOMODCACHE:-$SHARED_DIR/cache/go-mod}" "$GOMODCACHE_MAX_MB"
-  prune_dir GOLANGCI_LINT_CACHE "${GOLANGCI_LINT_CACHE:-$SHARED_DIR/cache/golangci-lint}" "$LINTCACHE_MAX_MB"
+  # Fixed paths, not $GOCACHE etc.: a job can change those through GITHUB_ENV.
+  prune_dir GOCACHE "$SHARED_DIR/cache/go-build" "$GOCACHE_MAX_MB"
+  prune_dir GOMODCACHE "$SHARED_DIR/cache/go-mod" "$GOMODCACHE_MAX_MB"
+  prune_dir GOLANGCI_LINT_CACHE "$SHARED_DIR/cache/golangci-lint" "$LINTCACHE_MAX_MB"
   # Runner diagnostic logs grow by a few files per job.
   local d
   for d in "$RUNNERS_ROOT"/*/_diag; do
@@ -126,6 +167,7 @@ prune_caches() {
 
 case "$phase" in
   started)
+    wait_for_prune
     reset_workspace
     ;;
   completed)

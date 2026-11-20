@@ -38,7 +38,10 @@ Labels on all three: `self-hosted, macOS, ARM64, codetok-local, ai`.
 | [44762851544](https://github.com/Miss-you/codetok/actions/runs/44762851544) | slot 3 | codetok-mac-mini-2 | reused `.git` | warm | 2 s | 1 s | 0 s (results cached) | 31 s |
 | same | slot 2 | codetok-mac-mini | reused `.git` (ENG-011 checkout) | warm deps | 3 s | 1 s | 234 s | 264 s |
 | same | slot 1 | codetok-mac-mini-3 | fresh clone | warm deps | 4 s | 1 s | 233 s | 267 s |
-| WARM_RUN | single | WARM_RUNNER | WARM_MODE | warm | WARM_CO | WARM_BUILD | WARM_TEST | WARM_JOB |
+| [44764455774](https://github.com/Miss-you/codetok/actions/runs/44764455774) | single | codetok-mac-mini-3 | reused `.git` | warm | 3 s | 1 s | 0 s (results cached) | 91 s (71 s of it `agy`) |
+| [44763322822](https://github.com/Miss-you/codetok/actions/runs/44763322822) (dispatched on `main` after #61 merged) | single | pool | reused `.git` | warm | 3 s | 1 s | 1 s | 32 s |
+
+Job start to the end of the non-AI steps (setup, checkout, build, test, `ai-review.sh --dry-run`): about 220 s cold, 8 s warm. The `agy -p` step varies with the network and model (10 s to 71 s across these runs) and is not affected by reuse.
 
 All green, including "Check runner pool setup" (`job hooks configured: yes`, `shared GOMODCACHE: yes`, `shared GOCACHE: yes`, `clean tree after checkout: yes`). Hook lines in the job logs, for example the cold run:
 
@@ -72,4 +75,4 @@ Fresh clone and empty `GOMODCACHE`/`GOCACHE` vs the same clone reused with warm 
 
 ## Repository checks
 
-MAKE_CHECKS
+`make vet`, `make build`, `make test` green on the branch (2026-11-20). No Go code changed.
