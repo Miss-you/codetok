@@ -32,3 +32,20 @@ Critical: none. "Ready to merge? With fixes". All findings verified and fixed in
 | Closed-PR history capped at 200; root-package `testdata/` | Minor | `--limit 1000`; `path.Join`; test added. |
 | Stale `rounds` in a reused out dir; any `round` error abandoned the candidate | Minor | `rounds` cleared at start; only exit 10 abandons, other errors `die`. |
 | Recommendation: `deadcode@v0.52.0` download needs the proxy | — | `setup_proxy` now runs before candidate collection in PR and no-pr modes. |
+
+### PR #62, head 75e84e8 (round 2)
+
+Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
+
+| Finding | Level | Action |
+| --- | --- | --- |
+| Fix-round prompt lacked the candidate and kind guidance (each `acpx exec` is a fresh session) | Important | `candidate_block` included in the fix prompt. |
+| Agent cannot delete an out-of-scope new file, so fix rounds could never recover | Important | `check -out-of-scope` lists offending paths; `revert_out_of_scope` restores them from base or deletes new ones before the fix round; test added. |
+| `[[ … ]] && rm` at the end of the guard cleanup loop could trip `set -e` | Important | `if … then … fi`. |
+| Proxy set after the first `gh`/`git` network calls | Minor | `setup_proxy` right after preflight in PR/no-pr modes. |
+| Any `verdict` error abandoned the candidate | Minor | Only exit 10 abandons; other errors `give_up`. |
+| Reused out dir kept stale reports | Minor | Per-run files cleared at start. |
+| `gofmt` file list without `core.quotePath=false` | Minor | Added. |
+| `sectionFor` matched titles that only mention "critical" | Minor | Titles must start with the severity; fixture added. |
+| `-max-lines`/`-max` not validated; root `testdata/` lint; `AUTO_OPTIMIZE_BASE` undocumented | Minor | Validated with tests; skipped; documented. `collectDocDrift` stays non-recursive: `cmd/` has no subpackages. |
+| Recommendation: bash-level integration test | — | Deferred to `todo.md`. |

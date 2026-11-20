@@ -67,13 +67,16 @@ main() {
     [[ $mode == dry-run ]] || { need acpx; need agy; }
 
     go_path=$(go env GOPATH) go_cache=$(go env GOCACHE) go_modcache=$(go env GOMODCACHE)
-    rm -f "$out/rounds"
+    # A reused out dir must not carry state or reports from an earlier run.
+    (cd "$out" && rm -rf rounds guard.diff guard-*.txt failure.md check.txt numstat.txt test.log make-lint.log \
+        verdict.txt pr-body.md review-comment.md review review.log agent-*.log prompt-*.md out-of-scope.txt)
     # Bootstrap build for the open-PR gate; rebuilt from the base commit below.
     ao="$out/autooptimize"
     go build -o "$ao" ./scripts/autooptimize
 
     if [[ $mode != dry-run ]]; then
         [[ -z $(git status --porcelain) ]] || die "the working tree is not clean; refusing to run"
+        setup_proxy
     fi
     if [[ $mode == pr ]]; then
         gh label list -R "$repo_slug" --search "$label" --json name --jq '.[].name' | grep -qxF "$label" \
@@ -93,7 +96,6 @@ main() {
         git checkout -q --detach "$base"
         # The tool comes from the commit under test, built before any agent edit.
         go build -o "$ao" ./scripts/autooptimize
-        setup_proxy
     fi
     log "base $base"
 
@@ -140,7 +142,10 @@ main() {
     AI_REVIEW_PROXY=$proxy AI_REVIEW_OUT_DIR="$out/review" \
         scripts/ai-review.sh --what "@$out/review-what.md" --requirements "@$out/review-requirements.md" \
         "$base" "$head" >"$out/review.log" 2>&1 || give_up "scripts/ai-review.sh failed (see review.log)"
-    "$ao" verdict -review "$out/review/review.md" >"$out/verdict.txt" 2>&1 || abandon "$(verdict_reason)"
+    local vstatus=0
+    "$ao" verdict -review "$out/review/review.md" >"$out/verdict.txt" 2>&1 || vstatus=$?
+    [[ $vstatus -ne 10 ]] || abandon "$(verdict_reason)"
+    [[ $vstatus -eq 0 ]] || give_up "autooptimize verdict failed with status $vstatus (see verdict.txt)"
     log "$(verdict_reason)"
 
     write_pr_body >"$out/pr-body.md"
@@ -246,7 +251,7 @@ guard_check() {
         [[ ! -d $out/git-backup/$d ]] || cp -Rp "$out/git-backup/$d" "$common/$d"
     done
     sed -n 's/^> !! //p' "$out/guard.diff" | while IFS= read -r p; do
-        [[ $p != /* && $p != *..* ]] && rm -rf -- "${repo_root:?}/$p"
+        if [[ $p != /* && $p != *..* ]]; then rm -rf -- "${repo_root:?}/$p"; fi
     done
     give_up "the agent changed git config, hooks, ignored files or run state (see guard.diff)"
 }
@@ -309,7 +314,7 @@ verify() {
     : >"$out/failure.md"
     git add -A || die "git add failed"
     local f
-    while IFS= read -r f; do gofmt -w "$f" || true; done < <(git diff --cached --name-only --diff-filter=d -- '*.go')
+    while IFS= read -r f; do gofmt -w "$f" || true; done < <(git -c core.quotePath=false diff --cached --name-only --diff-filter=d -- '*.go')
     git add -A || die "git add failed"
     git -c core.quotePath=false diff --cached --numstat --no-renames "$base" >"$out/numstat.txt" \
         || die "git diff --numstat failed"
@@ -317,8 +322,9 @@ verify() {
         abandon "the agent made no change (it may have judged the candidate unsafe; see the agent log)"
     fi
     if ! "$ao" check -candidate "$out/candidate.json" -numstat "$out/numstat.txt" -max-lines "$max_lines" \
-        >"$out/check.txt" 2>&1; then
+        -out-of-scope "$out/out-of-scope.txt" >"$out/check.txt" 2>&1; then
         { echo "## Scope check failed (tests were not run)"; echo; cat "$out/check.txt"; echo; } >>"$out/failure.md"
+        revert_out_of_scope
         return 1
     fi
     local ok=0
@@ -331,6 +337,27 @@ verify() {
         ok=1
     fi
     return $ok
+}
+
+# revert_out_of_scope puts every out-of-scope path back to the base commit
+# (or removes it if it is new), since the agent cannot delete files itself.
+revert_out_of_scope() {
+    [[ -s $out/out-of-scope.txt ]] || return 0
+    local p
+    while IFS= read -r p; do
+        if git cat-file -e "$base:$p" 2>/dev/null; then
+            git checkout -q "$base" -- "$p"
+        else
+            git rm -q -f --cached -- "$p" >/dev/null 2>&1 || true
+            rm -f -- "${repo_root:?}/$p"
+        fi
+    done <"$out/out-of-scope.txt"
+    git add -A || die "git add failed"
+    {
+        echo "The script reverted these out-of-scope files to the base version (new files were deleted):"
+        sed 's/^/- /' "$out/out-of-scope.txt"
+        echo
+    } >>"$out/failure.md"
 }
 
 # sandboxed runs the agent's code (tests) with a scrubbed environment: an empty
@@ -365,6 +392,18 @@ write_change_prompt() {
 You are making one small, safe cleanup in the codetok repository (a Go CLI) at $repo_root.
 Read AGENTS.md and CLAUDE.md first.
 
+$(candidate_block)
+
+$(rules)
+
+You have no shell: do not run commands (grep, go, git, make ...); such requests are denied.
+Use your built-in file reading, file search and text search tools instead, then edit the files directly.
+When done, reply with a short summary of what you changed and why it is safe.
+EOF
+}
+
+candidate_block() {
+    cat <<EOF
 ## Candidate $cand_id
 
 - Kind: $(describe kind)
@@ -373,12 +412,6 @@ Read AGENTS.md and CLAUDE.md first.
 - Finding: $(describe message)
 
 $(kind_guidance)
-
-$(rules)
-
-You have no shell: do not run commands (grep, go, git, make ...); such requests are denied.
-Use your built-in file reading, file search and text search tools instead, then edit the files directly.
-When done, reply with a short summary of what you changed and why it is safe.
 EOF
 }
 
@@ -395,6 +428,9 @@ write_fix_prompt() {
     cat <<EOF
 Your change for candidate $cand_id did not pass the checks. Fix the problems below with the smallest edit.
 If the problem cannot be fixed within the rules, revert your change completely.
+The files in the repository already contain your previous edits (minus anything the script reverted).
+
+$(candidate_block)
 
 $(cat "$out/failure.md")
 

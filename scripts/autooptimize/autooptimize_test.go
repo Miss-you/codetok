@@ -309,15 +309,25 @@ func TestCheckCommandSkipsOnViolation(t *testing.T) {
 	dir := t.TempDir()
 	cand := writeFile(t, dir, "c.json", `{"id":"aaaaaaaaaaaa","kind":"lint","package":"cmd"}`)
 	ok := writeFile(t, dir, "ok.txt", "1\t1\tcmd/daily.go\n")
-	bad := writeFile(t, dir, "bad.txt", "1\t1\tstats/a.go\n")
 	if err := run([]string{"check", "-candidate", cand, "-numstat", ok}, &bytes.Buffer{}); err != nil {
 		t.Errorf("in-scope diff: %v", err)
 	}
 	var out bytes.Buffer
-	err := run([]string{"check", "-candidate", cand, "-numstat", bad}, &out)
+	listFile := filepath.Join(dir, "out-of-scope.txt")
+	mixed := writeFile(t, dir, "mixed.txt", "1\t1\tcmd/daily.go\n1\t1\tstats/a.go\n2\t0\tgo.mod\n")
+	err := run([]string{"check", "-candidate", cand, "-numstat", mixed, "-out-of-scope", listFile}, &out)
 	var skip skipError
 	if !errors.As(err, &skip) || !strings.Contains(out.String(), "stats/a.go") {
 		t.Errorf("out-of-scope diff: err=%v out=%q", err, out.String())
+	}
+	if data, _ := os.ReadFile(listFile); string(data) != "stats/a.go\ngo.mod\n" {
+		t.Errorf("out-of-scope list = %q", data)
+	}
+	// A size-only violation lists no paths to revert.
+	big := writeFile(t, dir, "big.txt", "300\t0\tcmd/daily.go\n")
+	_ = run([]string{"check", "-candidate", cand, "-numstat", big, "-out-of-scope", listFile}, &bytes.Buffer{})
+	if data, _ := os.ReadFile(listFile); len(data) != 0 {
+		t.Errorf("size-only violation listed %q", data)
 	}
 }
 
@@ -362,6 +372,7 @@ func TestReviewVerdict(t *testing.T) {
 		{"hashline.md", false, "Critical/Important"},
 		{"noneof.md", false, "1 Critical/Important"},
 		{"nosections.md", false, "no Critical and Important sections"},
+		{"summarytitle.md", true, "no Critical/Important"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
@@ -409,6 +420,8 @@ func TestUsageErrors(t *testing.T) {
 		{"gate", "-open-prs", "x", "extra"},
 		{"describe", "-candidate", "x"},
 		{"gate", "-open-prs", "x", "-max-open", "0"},
+		{"check", "-candidate", "x", "-numstat", "y", "-max-lines", "0"},
+		{"round", "-state", "x", "-max", "-1"},
 	} {
 		if err := run(args, &bytes.Buffer{}); !errors.As(err, &usage) {
 			t.Errorf("%v: want usage error, got %v", args, err)

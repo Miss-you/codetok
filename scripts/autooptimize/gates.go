@@ -122,26 +122,37 @@ func parseNumstat(data []byte) ([]diffEntry, error) {
 // excluded paths, no binaries, and only files of the candidate's package (or
 // only the READMEs for a docs candidate). It returns every violation found.
 func checkDiff(c Candidate, entries []diffEntry, maxLines int) []string {
+	problems, _ := checkDiffPaths(c, entries, maxLines)
+	return problems
+}
+
+// checkDiffPaths is checkDiff that also returns the paths that may not be
+// changed at all, so the caller can put them back.
+func checkDiffPaths(c Candidate, entries []diffEntry, maxLines int) (problems, outOfScope []string) {
 	if len(entries) == 0 {
-		return []string{"the change is empty"}
+		return []string{"the change is empty"}, nil
 	}
-	var problems []string
 	total := 0
 	for _, e := range entries {
 		total += e.Added + e.Deleted
+		problem := ""
 		switch {
 		case e.Binary:
-			problems = append(problems, fmt.Sprintf("%s: binary files are not allowed", e.Path))
+			problem = fmt.Sprintf("%s: binary files are not allowed", e.Path)
 		case isExcludedPath(e.Path):
-			problems = append(problems, fmt.Sprintf("%s: this path is never changed by auto-optimize", e.Path))
+			problem = fmt.Sprintf("%s: this path is never changed by auto-optimize", e.Path)
 		case !pathAllowed(c, e.Path):
-			problems = append(problems, fmt.Sprintf("%s: outside the allowed scope (%s)", e.Path, c.AllowedPaths()))
+			problem = fmt.Sprintf("%s: outside the allowed scope (%s)", e.Path, c.AllowedPaths())
+		}
+		if problem != "" {
+			problems = append(problems, problem)
+			outOfScope = append(outOfScope, e.Path)
 		}
 	}
 	if total > maxLines {
 		problems = append(problems, fmt.Sprintf("diff is %d changed lines, the cap is %d", total, maxLines))
 	}
-	return problems
+	return problems, outOfScope
 }
 
 func pathAllowed(c Candidate, p string) bool {
@@ -203,11 +214,13 @@ var (
 // sectionFor maps a title to "critical", "important", "other" (a known
 // section that ends the issue list) or "" (not a section title).
 func sectionFor(title string) string {
-	t := strings.ToLower(title)
+	// Section titles start with the severity ("Critical (Must Fix)"); a
+	// title that only mentions it ("Summary of critical paths") does not count.
+	t := strings.ToLower(strings.TrimSpace(title))
 	switch {
-	case strings.Contains(t, "critical"):
+	case strings.HasPrefix(t, "critical"):
 		return "critical"
-	case strings.Contains(t, "important"):
+	case strings.HasPrefix(t, "important"):
 		return "important"
 	}
 	for _, other := range []string{"minor", "nice to have", "strength", "recommendation", "assessment", "issues", "summary", "reasoning"} {

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 const exitSkip = 10
@@ -280,8 +281,12 @@ func runCheck(fs *flag.FlagSet, args []string, stdout io.Writer) error {
 	file := fs.String("candidate", "", "candidate JSON from select")
 	numstat := fs.String("numstat", "", "git diff --cached --numstat --no-renames <base> output")
 	maxLines := fs.Int("max-lines", 200, "maximum added+deleted lines")
+	outOfScope := fs.String("out-of-scope", "", "write the paths that may not change here, one per line")
 	if err := parse(fs, args, "candidate", "numstat"); err != nil {
 		return err
+	}
+	if *maxLines < 1 {
+		return usageError{"check: -max-lines must be at least 1"}
 	}
 	var c Candidate
 	if err := readJSON(*file, &c); err != nil {
@@ -295,7 +300,17 @@ func runCheck(fs *flag.FlagSet, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if problems := checkDiff(c, entries, *maxLines); len(problems) > 0 {
+	problems, bad := checkDiffPaths(c, entries, *maxLines)
+	if *outOfScope != "" {
+		text := strings.Join(bad, "\n")
+		if text != "" {
+			text += "\n"
+		}
+		if err := os.WriteFile(*outOfScope, []byte(text), 0o644); err != nil {
+			return err
+		}
+	}
+	if len(problems) > 0 {
 		for _, p := range problems {
 			_, _ = fmt.Fprintf(stdout, "- %s\n", p)
 		}
@@ -310,6 +325,9 @@ func runRound(fs *flag.FlagSet, args []string, stdout io.Writer) error {
 	maxRounds := fs.Int("max", 2, "maximum fix rounds")
 	if err := parse(fs, args, "state"); err != nil {
 		return err
+	}
+	if *maxRounds < 0 {
+		return usageError{"round: -max must not be negative"}
 	}
 	n, ok, err := nextRound(*state, *maxRounds)
 	if err != nil {

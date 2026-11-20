@@ -27,7 +27,7 @@
    - lint, deadcode: `.go` files directly in the candidate's package directory, and its `testdata/`;
    - coverage: only `*_test.go` in that directory, and its `testdata/`;
    - docs: only `README.md` and `README_zh.md`.
-5. **Checks.** The script stages the change, runs `gofmt` on changed Go files, then checks scope and size (≤ 200 added+deleted lines). Only a change inside its scope is built: `make test` and `make lint` then run with a scrubbed environment (empty `HOME`, no proxy or tokens, `GOPROXY=off`). On failure the agent gets the errors and tries again, **at most 2 fix rounds**. Still failing, a rejected review, or no change at all: the run ends without a PR and records the candidate as abandoned. A tool or service failure (agent timeout, proxy down, reviewer error) also ends the run without a PR but does not record the candidate, so the next run tries it again.
+5. **Checks.** The script stages the change, runs `gofmt` on changed Go files, then checks scope and size (≤ 200 added+deleted lines). Only a change inside its scope is built: `make test` and `make lint` then run with a scrubbed environment (empty `HOME`, no proxy or tokens, `GOPROXY=off`). On failure the agent gets the candidate again plus the errors and tries again, **at most 2 fix rounds**. Files outside the scope are put back to `main` (new ones deleted) before a fix round, since the agent cannot delete files. Still failing, a rejected review, or no change at all: the run ends without a PR and records the candidate as abandoned. A tool or service failure (agent timeout, proxy down, reviewer error) also ends the run without a PR but does not record the candidate, so the next run tries it again.
 6. **Independent review.** `scripts/ai-review.sh` reviews the commit with a different model (`gemini-4-hydrogen`) against the candidate and the "no behavior change, no scope creep" rules. The run continues only when the verdict is not "No" and the Critical and Important sections are empty.
 7. **PR.** Push `auto-optimize/<UTC time>-<candidate id>`, open a PR with the `auto-optimize` label and the candidate, change, checks and review in the body, and post the review as an `AI review: <head SHA>` comment. CI runs as for any PR. A person reviews and merges, or closes it.
 
@@ -57,6 +57,7 @@ Environment variables read by `scripts/auto-optimize.sh` (set them in the runner
 | `AUTO_OPTIMIZE_TIMEOUT` | `1800` | seconds per agent turn |
 | `AUTO_OPTIMIZE_STATE_DIR` | `~/.local/state/codetok-auto-optimize` | keeps `abandoned.txt` |
 | `AUTO_OPTIMIZE_OUT_DIR` | `$TMPDIR/codetok-auto-optimize/<time>` | logs and reports, outside the checkout |
+| `AUTO_OPTIMIZE_BASE` | `main` | base branch fetched from `origin` |
 | `DEADCODE_VERSION` | `v0.52.0` | `golang.org/x/tools` version for `deadcode` |
 
 To retry an abandoned candidate, delete its line from `abandoned.txt`. A candidate whose PR was closed unmerged is skipped for good; its ID is in the PR body (`<!-- auto-optimize-candidate: … -->`).

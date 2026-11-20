@@ -164,7 +164,7 @@ func parseLint(data []byte) ([]Candidate, error) {
 	var out []Candidate
 	for _, is := range report.Issues {
 		file := filepath.ToSlash(is.Pos.Filename)
-		if file == "" || isExcludedPath(file) || strings.Contains(file, "/testdata/") {
+		if file == "" || isExcludedPath(file) || strings.HasPrefix(file, "testdata/") || strings.Contains(file, "/testdata/") {
 			continue
 		}
 		out = append(out, finalize(Candidate{
