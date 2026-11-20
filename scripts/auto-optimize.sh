@@ -475,9 +475,10 @@ review_answer() {
         | relative_paths
 }
 
-# relative_paths turns local absolute paths (file:///Users/...) into repo-relative ones.
+# relative_paths turns local absolute paths into repo-relative ones, and any
+# other path under $HOME into ~/..., so no local user name is published.
 relative_paths() {
-    sed -e "s#file://${repo_root}/##g" -e "s#${repo_root}/##g"
+    sed -e "s#file://${repo_root}/##g" -e "s#${repo_root}/##g" -e "s#file://${HOME}/#~/#g" -e "s#${HOME}/#~/#g"
 }
 
 main "$@"
