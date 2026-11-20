@@ -29,10 +29,6 @@ jobs:
     if: github.repository == 'Miss-you/codetok'
     runs-on: [self-hosted, macOS, ARM64, codetok-local, ai]
     timeout-minutes: 30
-    # TEMPORARY (ENG-014 pool concurrency check): three parallel jobs, one per instance.
-    strategy:
-      matrix:
-        slot: [1, 2, 3]
     env:
       # Same convention as scripts/ai-review.sh: agy ignores the macOS system proxy.
       # Override with the repository variable AI_REVIEW_PROXY ("none" = direct).

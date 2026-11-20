@@ -187,12 +187,13 @@ this runner are of two kinds:
 
 - AI jobs (#57 archive, #58 optimize, AI review): mostly waiting on `agy` / the network,
   little CPU.
-- `make test`: `go test -race` over all packages, CPU-bound for about 2 minutes cold and
-  dominated by the `e2e` package (about 150 s even with a warm build cache).
+- `make test`: `go test -race` over all packages, CPU-bound for about 3 minutes when tests
+  must run, dominated by the `e2e` package (about 150 s even with a warm build cache).
 
 Three instances let the three workflow kinds (smoke, archive, optimize) run at the same
-time. Two concurrent `go test -race` runs already use every core; a fourth instance would
-only make CPU-bound jobs slower and the Mac less usable for interactive work, while queuing
+time. Measured: three parallel smoke jobs each took 233 s in `make test` against 177 s for
+one alone, so the CPU is already shared at three; a fourth instance would only make
+CPU-bound jobs slower and the Mac less usable for interactive work, while queuing
 is rare at this repository's job volume. Each instance holds about 440 MB of runner build
 plus its `_work`; memory stays far below 32 GB. Change the count with
 `scripts/runner/setup-pool.sh --count N` (adding instances is safe; removing one is the
@@ -228,6 +229,11 @@ ACTIONS_RUNNER_HOOK_JOB_COMPLETED=~/actions-runner/_shared/hooks/job-completed.s
 maintainer's own `~/go/pkg/mod` and `~/Library/Caches/go-build`, so pruning them never
 touches interactive work. Both Go caches are safe for concurrent use by several `go`
 processes.
+
+What is shared and what is not: dependency builds (mostly `modernc.org/sqlite`) hit the
+shared `GOCACHE` from any instance (`make build` 24 s cold, 1 s on an instance that never
+built before). Test results hit only on the same instance, because each instance compiles
+from its own absolute workspace path. Numbers: `workspace/ENG-014/verification.md`.
 
 ### Workspace reuse
 
@@ -290,8 +296,9 @@ or VM-based runners that gives a fresh machine per job. Here it would not:
   the same `$HOME`, keychain, `agy`/`gh` login state and proxy, which is exactly what the
   AI jobs need. The isolation gain is a fresh `_work` directory, which the job hooks
   already provide.
-- Every job would start with a full clone and, unless caches are shared anyway, a cold Go
-  build (266 s cold vs a few seconds warm, see `workspace/ENG-014/verification.md`).
+- Every job would start with a full clone in a new work directory, so it would lose the
+  per-instance test-result cache too (smoke job: 236 s cold vs 31 s on a reused instance
+  with unchanged code, see `workspace/ENG-014/verification.md`).
 - Something has to re-register a runner after each job: a long-running controller holding a
   credential that can mint registration tokens. That is more moving parts and a standing
   admin credential on the machine, for no security gain while fork PRs never reach this
