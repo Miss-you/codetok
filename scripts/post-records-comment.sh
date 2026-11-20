@@ -19,6 +19,7 @@
 # the PR keeps exactly one. This does not commit anything or change the PR head.
 set -euo pipefail
 
+caller_dir=$(pwd)
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 repo_slug=${ARCHIVE_REPO:-Miss-you/codetok}
 
@@ -30,7 +31,11 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --pr) need_value "$@"; pr=$2; [[ $pr =~ ^[0-9]+$ ]] || die "--pr needs a number" 2; shift 2 ;;
         --task) need_value "$@"; task=$2; shift 2 ;;
-        --inline) need_value "$@"; tool_args+=(--inline "$2"); shift 2 ;;
+        --inline) need_value "$@"
+            # FILE is relative to the caller's directory, not the repository root.
+            name=${2%%=*} file=${2#*=}
+            [[ $2 == *=* && $file == /* ]] || file=$caller_dir/$file
+            tool_args+=(--inline "$name=$file"); shift 2 ;;
         --dry-run) dry_run=1; shift ;;
         -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown option $1" 2 ;;
@@ -69,7 +74,7 @@ marker="<!-- codetok-records:$task -->"
 # gh's --jq is gojq (Go regexp), so (?m) makes ^ and $ match at line breaks.
 ids=$(gh api --paginate "repos/$repo_slug/issues/$pr/comments" \
     --jq '.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
-               | select(.body | test("(?m)^<!-- codetok-records:[^ >]* -->[ \t]*\r?$")) | .id')
+               | select(.body | test("(?m)^<!-- codetok-records:[^ >\r\n]* -->[ \t]*\r?$")) | .id')
 count=$(grep -c . <<<"$ids" || true)
 if [[ $count -gt 1 ]]; then
     die "PR #$pr already has $count records comments ($(tr '\n' ' ' <<<"$ids")); delete the extras, then rerun"
@@ -78,7 +83,7 @@ payload=$work/payload.json
 python3 -c 'import json,sys; json.dump({"body": open(sys.argv[1], encoding="utf-8").read()}, open(sys.argv[2], "w", encoding="utf-8"))' "$body" "$payload"
 if [[ $count -eq 1 ]]; then
     existing=$(gh api "repos/$repo_slug/issues/comments/$ids" --jq .body)
-    tr -d '\r' <<<"$existing" | grep -qxF "$marker" || die "PR #$pr has a records comment ($ids) for another task; edit or delete it first"
+    tr -d '\r' <<<"$existing" | sed 's/[[:space:]]*$//' | grep -qxF "$marker" || die "PR #$pr has a records comment ($ids) for another task; edit or delete it first"
     url=$(gh api -X PATCH "repos/$repo_slug/issues/comments/$ids" --input "$payload" --jq .html_url)
     printf 'post-records-comment: updated %s\n' "$url" >&2
 else

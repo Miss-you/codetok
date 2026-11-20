@@ -151,12 +151,12 @@ fi
 say "PR #$pr: archiving $task_id into $dest/$task_id/"
 
 # 3. Summary from agy through acpx.
+need acpx; need agy
 stage_dir=$work/stage
 if [[ $dry_run -eq 1 ]]; then
     stage_dir=$(mktemp -d "${TMPDIR:-/tmp}/archive-records-dry-run.XXXXXX")
     cp -R "$work/stage/." "$stage_dir/"
 fi
-need acpx; need agy
 cmd=(acpx --cwd "$stage_dir" --deny-all --non-interactive-permissions deny --no-terminal
      --model "${ARCHIVE_MODEL:-gemini-4-hydrogen}" --timeout "${ARCHIVE_TIMEOUT:-900}" --format text
      --agent "$(command -v agy) acp"

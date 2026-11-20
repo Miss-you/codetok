@@ -276,7 +276,7 @@ esac
 		}
 	})
 	t.Run("edits the existing comment", func(t *testing.T) {
-		out, calls, err := run("123\n", Marker("ENG-012")+"\r\nold\n", ok...)
+		out, calls, err := run("123\n", Marker("ENG-012")+" \r\nold\n", ok...)
 		if err != nil || !strings.Contains(calls, "api -X PATCH repos/Miss-you/codetok/issues/comments/123") || strings.Contains(calls, "POST") {
 			t.Fatalf("err=%v calls=%q\n%s", err, calls, out)
 		}
@@ -285,6 +285,18 @@ esac
 		out, calls, err := run("123\n", Marker("ENG-999")+"\nsee `"+Marker("ENG-012")+"`\n", ok...)
 		if err == nil || strings.Contains(calls, "-X ") {
 			t.Fatalf("err=%v calls=%q\n%s", err, calls, out)
+		}
+	})
+	t.Run("inline file is relative to the caller", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("from the caller dir\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("/bin/bash", script, "--dry-run", "--pr", "60", "--task", "ENG-012", "--inline", "notes.md=notes.md", "workspace/ENG-012/")
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(out), "from the caller dir") {
+			t.Fatalf("err=%v\n%s", err, out)
 		}
 	})
 	t.Run("refuses two comments", func(t *testing.T) {

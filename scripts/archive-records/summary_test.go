@@ -58,6 +58,7 @@ func TestParseSummaryRejects(t *testing.T) {
 		"wrong type":       strings.Replace(validSummary, `"pr":57`, `"pr":"57"`, 1),
 		"nested unknown":   strings.Replace(validSummary, `"role":"final design"`, `"role":"final design","why":"x"`, 1),
 		"no files":         strings.Replace(validSummary, `[{"path":"workspace/ENG-012/final_impl.md","role":"final design"}]`, `[]`, 1),
+		"duplicate file":   strings.Replace(validSummary, `[{"path":"workspace/ENG-012/final_impl.md","role":"final design"}]`, `[{"path":"workspace/ENG-012/final_impl.md","role":"a"},{"path":"workspace/ENG-012/final_impl.md","role":"b"}]`, 1),
 		"empty whats item": strings.Replace(validSummary, `["Added the archive workflow."]`, `[""]`, 1),
 	}
 	for name, in := range cases {

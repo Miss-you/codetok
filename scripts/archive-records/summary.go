@@ -141,7 +141,12 @@ func validateSummary(s Summary, m Manifest) error {
 	if len(s.Files) == 0 {
 		bad("files is empty")
 	}
+	listed := map[string]bool{}
 	for i, f := range s.Files {
+		if listed[f.Path] {
+			bad("files[%d].path %q is listed twice", i, f.Path)
+		}
+		listed[f.Path] = true
 		if !known[f.Path] {
 			bad("files[%d].path %q is not an archived file", i, f.Path)
 		}
