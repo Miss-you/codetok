@@ -74,3 +74,8 @@ When adding or changing a provider:
 - Use snake_case JSON tags for user-facing JSON fields.
 - Keep imports grouped as standard library, external dependencies, then internal packages; rely on `make fmt`.
 - Do not broaden dependencies casually. This CLI should stay small and predictable.
+
+## Pull Request Review
+
+- Copilot review is not available. After creating a PR or pushing to it, run the read-only Gemini 4 Hydrogen review `scripts/ai-review.sh --pr <number>` (acpx + Antigravity CLI `agy`) for the new head and post the result as an `AI review: <full head SHA>` comment. `monitoring-pr-ai-reviews` describes the comment format, failure handling, and how findings gate the merge.
+- When `scripts/ai-review.sh`, acpx, or agy fails, check `docs/agents/faq/ai-review.md` first and add or update an entry after solving a new problem.
