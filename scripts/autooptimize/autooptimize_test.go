@@ -378,6 +378,7 @@ func TestReviewVerdict(t *testing.T) {
 		{"nosections.md", false, "no Critical and Important sections"},
 		{"summarytitle.md", true, "no Critical/Important"},
 		{"trace.md", true, "no Critical/Important"},
+		{"boldheading.md", false, "1 Critical/Important"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {

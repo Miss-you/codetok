@@ -74,3 +74,7 @@ Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
 | Reused out dir kept other per-run files | Minor | Cleanup list covers every per-run file. |
 | Pre-existing ignored dirs comment missing | Minor | Comment on `guard_state`. |
 | `./`-prefixed tool paths bypassed exclusions; dry run without proxy | Minor | `cleanPath` (`path.Clean`), tested; dry run uses `AUTO_OPTIMIZE_PROXY` when set. |
+
+### PR #62, head a830d78 (round 5)
+
+"Ready to merge? Yes". Critical and Important: none. Minor items applied in the next commit: scan the commit's added lines for tokens before pushing (`no_secrets_in_commit`, tested); strip `**`/`_` from section titles (fixture `boldheading.md`); `die` with a hint if `git commit` fails; `sha256sum` fallback; `--limit 100` on the open-PR query. Separately, CI flagged `auto-optimize.yml` as invalid (`runner.temp` in job-level env), fixed in e0b1908 and checked with actionlint.

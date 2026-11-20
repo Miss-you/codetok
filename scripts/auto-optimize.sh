@@ -88,7 +88,7 @@ main() {
     fi
 
     # 1. At most N open optimization PRs.
-    gh pr list -R "$repo_slug" --label "$label" --state open --json number,url >"$out/open-prs.json"
+    gh pr list -R "$repo_slug" --label "$label" --state open --limit 100 --json number,url >"$out/open-prs.json"
     gate "$ao" gate -open-prs "$out/open-prs.json" -max-open "${AUTO_OPTIMIZE_MAX_OPEN:-1}"
 
     # 2. Base commit. A dry run inspects the checkout as it is.
@@ -138,8 +138,10 @@ main() {
     done
 
     git commit -q -m "chore(auto-optimize): $cand_title" -m "Candidate $cand_id: $(describe message)" \
-        -m "Proposed by scripts/auto-optimize.sh (#58)."
+        -m "Proposed by scripts/auto-optimize.sh (#58)." \
+        || die "git commit failed (check git user.name and user.email on the runner)"
     head=$(git rev-parse HEAD)
+    no_secrets_in_commit
 
     # 6. Independent review by a different model.
     write_review_inputs
@@ -242,7 +244,9 @@ guard_snapshot() {
 # show up as one "!! dir/" line, so files inside them are not tracked one by
 # one. The runner starts from a fresh checkout, where none exist.
 guard_state() {
-    guard_files | while IFS= read -r f; do shasum -a 256 "$f"; done
+    local sum=(shasum -a 256)
+    command -v shasum >/dev/null 2>&1 || sum=(sha256sum)
+    guard_files | while IFS= read -r f; do "${sum[@]}" "$f"; done
     echo "-- ignored --"
     git -c core.quotePath=false status --porcelain --ignored=matching --untracked-files=all | grep '^!!' || true
 }
@@ -270,13 +274,26 @@ guard_check() {
     give_up "the agent changed git config, hooks, ignored files or run state (see guard.diff)"
 }
 
-# no_secrets refuses to publish text that looks like a credential.
-no_secrets() {
-    # Token prefixes must start a word, so prose like "task-..." does not match.
+# has_secrets reports whether any of the files contains a token-like string.
+# Token prefixes must start a word, so prose like "task-..." does not match.
+has_secrets() {
     local tokens='gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}'
-    if grep -n -E "(^|[^A-Za-z0-9_-])($tokens)|-----BEGIN [A-Z ]*PRIVATE KEY" "$@" >/dev/null; then
-        rm -f -- "$@" # keep them out of the uploaded artifact too
+    grep -q -E "(^|[^A-Za-z0-9_-])($tokens)|-----BEGIN [A-Z ]*PRIVATE KEY" "$@"
+}
+
+# no_secrets refuses to publish text that looks like a credential, and deletes
+# the files so they are not uploaded as artifacts either.
+no_secrets() {
+    if has_secrets "$@"; then
+        rm -f -- "$@"
         give_up "the PR text looks like it contains a credential; nothing was published"
+    fi
+}
+
+# no_secrets_in_commit refuses to push a change that adds token-like strings.
+no_secrets_in_commit() {
+    if git diff "$base" "$head" | grep '^+' | has_secrets -; then
+        give_up "the change adds a token-like string; nothing was pushed"
     fi
 }
 

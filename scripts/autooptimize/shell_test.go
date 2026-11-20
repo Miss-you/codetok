@@ -264,3 +264,20 @@ func TestShellNoSecretsRemovesFlaggedFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestShellNoSecretsInCommit(t *testing.T) {
+	repo := tempRepo(t)
+	run := func(content string) int {
+		writeFile(t, repo, "cmd/a.go", content)
+		git(t, repo, "add", "-A")
+		git(t, repo, "commit", "-q", "-m", "change")
+		_, code := runShell(t, repo, `base=$(git rev-parse HEAD~1) head=$(git rev-parse HEAD); no_secrets_in_commit; echo ok`)
+		return code
+	}
+	if code := run("package cmd\n\n// task-auto-optimize-candidate-selection-notes\n"); code != 0 {
+		t.Errorf("clean change: code %d", code)
+	}
+	if code := run("package cmd\n\nconst k = \"ghp_" + strings.Repeat("Z7", 18) + "\"\n"); code != 3 {
+		t.Errorf("added token: code %d, want give_up", code)
+	}
+}

@@ -219,7 +219,7 @@ var (
 func sectionFor(title string) string {
 	// Section titles start with the severity ("Critical (Must Fix)"); a
 	// title that only mentions it ("Summary of critical paths") does not count.
-	t := strings.ToLower(strings.TrimSpace(title))
+	t := strings.ToLower(strings.Trim(strings.TrimSpace(title), "*_ "))
 	switch {
 	case strings.HasPrefix(t, "critical"):
 		return "critical"
