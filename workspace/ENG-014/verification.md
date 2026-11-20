@@ -40,6 +40,8 @@ Labels on all three: `self-hosted, macOS, ARM64, codetok-local, ai`.
 | same | slot 1 | codetok-mac-mini-3 | fresh clone | warm deps | 4 s | 1 s | 233 s | 267 s |
 | [44764455774](https://github.com/Miss-you/codetok/actions/runs/44764455774) | single | codetok-mac-mini-3 | reused `.git` | warm | 3 s | 1 s | 0 s (results cached) | 91 s (71 s of it `agy`) |
 | [44763322822](https://github.com/Miss-you/codetok/actions/runs/44763322822) (dispatched on `main` after #61 merged) | single | pool | reused `.git` | warm | 3 s | 1 s | 1 s | 32 s |
+| [44765803152](https://github.com/Miss-you/codetok/actions/runs/44765803152) (hardened hook) | single | codetok-mac-mini | reused `.git` | warm | 3 s | 1 s | 0 s | 33 s |
+| [44766082675](https://github.com/Miss-you/codetok/actions/runs/44766082675) (final hook) | single | codetok-mac-mini-2 | reused `.git` | warm | 3 s | 1 s | 1 s | 32 s |
 
 Job start to the end of the non-AI steps (setup, checkout, build, test, `ai-review.sh --dry-run`): about 220 s cold, 8 s warm. The `agy -p` step varies with the network and model (10 s to 71 s across these runs) and is not affected by reuse.
 
@@ -53,6 +55,8 @@ Complete runner  [runner-hook:completed] GOMODCACHE: 371MB <= 4096MB cap
 ```
 
 Concurrency: run 44762851544 (temporary 3-slot matrix) started all three jobs within 2 s of each other, one per instance.
+
+Busy detection: run 44765803152 logged `runner workers running: 0 (this job included)`. macOS `pgrep` leaves out its own ancestors, and the hook runs inside its worker. The fail-closed check then skipped pruning (safe, but pruning would never run). Switched to `ps`; run 44766082675 logs `runner workers running: 1 (this job included)`.
 
 ## Local cold vs warm (same machine, outside the runner)
 
