@@ -13,6 +13,7 @@ Supported providers:
 - **Kimi Code** — parses `~/.kimi-code/sessions/**/agents/*/wire.jsonl`
 - **Claude Code** — parses `~/.claude/projects/**/*.jsonl` (with streaming deduplication)
 - **Codex CLI** — parses `$CODEX_HOME/sessions/**/*.jsonl` when `CODEX_HOME` is set, otherwise `~/.codex/sessions/**/*.jsonl`
+- **Antigravity** — reads CLI (`agy`) and IDE conversation databases from `~/.gemini/antigravity-cli/conversations/*.db` and `~/.gemini/antigravity/conversations/*.db`
 - **Cursor** — parses local Cursor usage export CSVs from `~/.codetok/cursor/*.csv`, `~/.codetok/cursor/imports/**/*.csv`, and `~/.codetok/cursor/synced/**/*.csv`
 
 Planned:
@@ -192,12 +193,13 @@ Flags:
 | `--since` | Start date filter (format: `2006-01-02`) |
 | `--until` | End date filter (format: `2006-01-02`) |
 | `--timezone` | Timezone for date filters and daily buckets; accepts an IANA name and defaults to local time |
-| `--provider` | Filter by provider name (e.g. `kimi`, `claude`, `codex`) |
+| `--provider` | Filter by provider name (e.g. `kimi`, `claude`, `codex`, `antigravity`) |
 | `--base-dir` | Override default data directory (applies to all providers) |
 | `--kimi-dir` | Override Kimi Code data directory |
 | `--claude-dir` | Override Claude Code data directory |
 | `--codex-dir` | Override Codex CLI data directory |
 | `--cursor-dir` | Override Cursor CSV directory; scans only the provided local path |
+| `--antigravity-dir` | Override Antigravity data root (a directory containing `conversations/`); scans only that root |
 
 Common combinations:
 - `codetok daily` — last 7 days, dashboard grouped by CLI/provider, unit `m`
@@ -222,7 +224,7 @@ Date        Provider  Session                               Title               
 TOTAL                                                                                  2965044   369854  27973571
 ```
 
-Flags: `--json`, `--since`, `--until`, `--timezone`, `--provider`, `--base-dir`, `--kimi-dir`, `--claude-dir`, `--codex-dir`, `--cursor-dir`.
+Flags: `--json`, `--since`, `--until`, `--timezone`, `--provider`, `--base-dir`, `--kimi-dir`, `--claude-dir`, `--codex-dir`, `--cursor-dir`, `--antigravity-dir`.
 `--timezone` accepts an IANA timezone name and defaults to local time.
 When `--cursor-dir` is set, only that local directory is scanned.
 
@@ -252,6 +254,10 @@ Statistics scope:
 
 **Kimi Code** — `~/.kimi-code/sessions/<work-dir>/<session-id>/agents/<agent>/wire.jsonl`
 - Parses `usage.record` events containing per-request `usage`; sums usage across all agents in a session
+
+**Antigravity** — `~/.gemini/antigravity-cli/conversations/<conversation-id>.db` (CLI) and `~/.gemini/antigravity/conversations/<conversation-id>.db` (IDE)
+- Reads one usage record per model call from the `gen_metadata` table (input, cache read, cache write, output; output includes thinking tokens)
+- Opens files read-only; a conversation with pending WAL data is read from a temporary copy
 
 **Claude Code** — `~/.claude/projects/<project-slug>/<session-uuid>.jsonl`
 - Parses `assistant` events with `message.usage`
@@ -284,6 +290,8 @@ codetok/
 │   ├── provider.go         # Provider interface and data types
 │   ├── registry.go         # Provider auto-registration via init()
 │   ├── parallel.go         # Bounded parallel parsing helper
+│   ├── antigravity/
+│   │   └── parser.go       # Antigravity conversation DB parser
 │   ├── kimi/
 │   │   └── parser.go       # Kimi Code wire.jsonl parser
 │   ├── claude/
