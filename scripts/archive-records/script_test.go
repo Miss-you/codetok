@@ -198,3 +198,99 @@ func TestArchiveScriptEndToEnd(t *testing.T) {
 		}
 	})
 }
+
+// TestPostRecordsCommentScript runs scripts/post-records-comment.sh in this
+// repository with a stub gh. The jq filter itself runs inside gh and is not
+// exercised here; the stub returns the ids it would select.
+func TestPostRecordsCommentScript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("post-records-comment.sh is a bash script")
+	}
+	for _, bin := range []string{"bash", "git", "python3", "go"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not installed", bin)
+		}
+	}
+	if out, err := exec.Command("git", "ls-files", "--error-unmatch", "../../workspace/ENG-012/final_impl.md").CombinedOutput(); err != nil {
+		t.Skipf("workspace/ENG-012 is not tracked in this checkout: %s", out)
+	}
+	stubs := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stubs, "gh"), []byte(`#!/bin/bash
+d=$(dirname "$0")
+echo "$*" >>"$d/calls"
+case "$*" in
+  *--paginate*) cat "$d/ids" ;;
+  "api -X "*)
+    while [[ $# -gt 0 ]]; do [[ $1 == --input ]] && cp "$2" "$d/payload.json"; shift; done
+    echo https://example.invalid/comment ;;
+  *"--jq .body") cat "$d/existing" ;;
+  *) echo "unexpected gh call: $*" >&2; exit 9 ;;
+esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script, _ := filepath.Abs("../post-records-comment.sh")
+	run := func(ids, existing string, args ...string) (string, string, error) {
+		_ = os.WriteFile(filepath.Join(stubs, "ids"), []byte(ids), 0o644)
+		_ = os.WriteFile(filepath.Join(stubs, "existing"), []byte(existing), 0o644)
+		_ = os.Remove(filepath.Join(stubs, "calls"))
+		_ = os.Remove(filepath.Join(stubs, "payload.json"))
+		cmd := exec.Command("/bin/bash", append([]string{script, "--pr", "60", "--task", "ENG-012"}, args...)...)
+		cmd.Env = append(os.Environ(), "PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
+		out, err := cmd.CombinedOutput()
+		calls, _ := os.ReadFile(filepath.Join(stubs, "calls"))
+		return string(out), string(calls), err
+	}
+	ok := []string{"workspace/ENG-012/", "docs/plans/2026-06-13-engineering-roadmap.md"}
+
+	t.Run("no paths", func(t *testing.T) {
+		if out, _, err := run("", ""); err == nil || !strings.Contains(out, "list at least one path") {
+			t.Fatalf("err=%v\n%s", err, out)
+		}
+	})
+	for name, bad := range map[string]string{
+		"directory without slash": "workspace/ENG-012",
+		"file with slash":         "workspace/ENG-012/final_impl.md/",
+		"untracked path":          "workspace/ENG-012/does-not-exist.md",
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, calls, err := run("", "", bad)
+			if err == nil || calls != "" {
+				t.Fatalf("err=%v gh calls=%q\n%s", err, calls, out)
+			}
+		})
+	}
+	t.Run("posts a new comment", func(t *testing.T) {
+		out, calls, err := run("", "", ok...)
+		if err != nil || !strings.Contains(calls, "api -X POST repos/Miss-you/codetok/issues/60/comments") {
+			t.Fatalf("err=%v calls=%q\n%s", err, calls, out)
+		}
+		var payload struct{ Body string }
+		data, _ := os.ReadFile(filepath.Join(stubs, "payload.json"))
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatal(err)
+		}
+		r, found, err := ParseComment(payload.Body)
+		if !found || err != nil || r.TaskID != "ENG-012" || len(r.Paths) != 2 {
+			t.Fatalf("posted body does not parse: %+v %v %v", r, found, err)
+		}
+	})
+	t.Run("edits the existing comment", func(t *testing.T) {
+		out, calls, err := run("123\n", Marker("ENG-012")+"\r\nold\n", ok...)
+		if err != nil || !strings.Contains(calls, "api -X PATCH repos/Miss-you/codetok/issues/comments/123") || strings.Contains(calls, "POST") {
+			t.Fatalf("err=%v calls=%q\n%s", err, calls, out)
+		}
+	})
+	t.Run("refuses another task's comment", func(t *testing.T) {
+		out, calls, err := run("123\n", Marker("ENG-999")+"\nsee `"+Marker("ENG-012")+"`\n", ok...)
+		if err == nil || strings.Contains(calls, "-X ") {
+			t.Fatalf("err=%v calls=%q\n%s", err, calls, out)
+		}
+	})
+	t.Run("refuses two comments", func(t *testing.T) {
+		out, calls, err := run("1\n2\n", "", ok...)
+		if err == nil || strings.Contains(calls, "-X ") || !strings.Contains(out, "2 records comments") {
+			t.Fatalf("err=%v calls=%q\n%s", err, calls, out)
+		}
+	})
+}

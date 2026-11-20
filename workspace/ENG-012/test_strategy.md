@@ -17,5 +17,6 @@ All automated checks: `go test ./scripts/archive-records/` (included in `make te
 | Commit message `docs: archive <id> records (#<pr>) [skip ci]` | `TestCommitMessageSkipsCI` |
 | Workflow triggers only on pull_request/workflow_dispatch, fork guard, runner labels, no secrets, no `pull_request_target`/`issue_comment` | `TestArchiveWorkflowGuards` |
 | Whole shell flow against a local bare origin with stub gh/acpx/agy: push with the right message, only `docs/changes/<id>/` touched, verbatim files, rerun makes no commit and no AI call, no-marker and fork PRs skip, invalid AI output fails with no commit, acpx called with `--deny-all --no-terminal`, temp worktree removed | `TestArchiveScriptEndToEnd` |
+| Helper script: no paths, dir without `/`, file with `/`, untracked path fail before any gh call; POST when none, PATCH when one, refuse another task's or two comments; posted body parses | `TestPostRecordsCommentScript` |
 
 Manual (needs the runner from ENG-011 and a real merge): see `todo.md`.

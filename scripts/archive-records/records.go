@@ -34,7 +34,7 @@ const markerPrefix = "codetok-records:"
 var (
 	// The marker counts only on a line of its own, so quoting it inline in a
 	// review or discussion comment (`<!-- codetok-records:X -->`) does not.
-	markerRe      = regexp.MustCompile(`(?m)^<!-- codetok-records:([^ >]*) -->[ \t]*\r?$`)
+	markerRe      = regexp.MustCompile(`(?m)^<!-- codetok-records:([^ >\r\n]*) -->[ \t]*\r?$`)
 	taskIDRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	inlineNameRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
 	bulletRe      = regexp.MustCompile("^\\s*[-*] `([^`]+)`")

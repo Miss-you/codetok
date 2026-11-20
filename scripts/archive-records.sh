@@ -85,6 +85,28 @@ if [[ -z $tool ]]; then
     (cd "$script_root" && go build -o "$tool" ./scripts/archive-records) || die "cannot build scripts/archive-records"
 fi
 
+# Proxy first: gh, git and agy all go through it (same rule as
+# scripts/ai-review.sh). launchd jobs do not read ~/.zshrc.
+proxy=${AI_REVIEW_PROXY:-${HTTPS_PROXY:-${https_proxy:-http://127.0.0.1:7890}}}
+if [[ $proxy == none ]]; then
+    unset HTTPS_PROXY HTTP_PROXY https_proxy http_proxy ALL_PROXY all_proxy
+else
+    if [[ $proxy =~ ^[a-z0-9]+://([^/@]+@)?(\[[0-9a-fA-F:]+\]|[^/:@]+):([0-9]+)/?$ ]]; then
+        proxy_host=${BASH_REMATCH[2]} proxy_port=${BASH_REMATCH[3]}
+        proxy_host=${proxy_host#\[}; proxy_host=${proxy_host%\]}
+    else
+        die "AI_REVIEW_PROXY must look like http://host:port, got: $(sed -E 's#://[^/@]+@#://***@#' <<<"$proxy")" 2
+    fi
+    if [[ $dry_run -eq 0 ]]; then
+        need nc
+        nc -z -w 3 "$proxy_host" "$proxy_port" >/dev/null 2>&1 \
+            || die "proxy $proxy_host:$proxy_port is not reachable. Start the proxy client, or set AI_REVIEW_PROXY (\"none\" to connect directly)."
+    fi
+    unset ALL_PROXY all_proxy
+    export HTTPS_PROXY=$proxy HTTP_PROXY=$proxy https_proxy=$proxy http_proxy=$proxy
+    export NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,::1,.local} no_proxy=${NO_PROXY:-localhost,127.0.0.1,::1,.local}
+fi
+
 # 1. PR and comments.
 gh pr view "$pr" -R "$repo_slug" \
     --json number,title,body,url,state,baseRefName,isCrossRepository,mergeCommit,mergedAt >"$work/pr.json" \
@@ -94,7 +116,7 @@ gh api --paginate "repos/$repo_slug/issues/$pr/comments" >"$work/comments.json" 
 
 git -C "$repo_dir" fetch -q "$remote" "refs/heads/$branch" || die "cannot fetch $branch from $remote"
 base_tip=$(git -C "$repo_dir" rev-parse FETCH_HEAD)
-merge_sha=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])).get("mergeCommit") or {}; print(m.get("oid") or "")' "$work/pr.json")
+merge_sha=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1], encoding="utf-8")).get("mergeCommit") or {}; print(m.get("oid") or "")' "$work/pr.json")
 if [[ -n $merge_sha ]] && ! git -C "$repo_dir" cat-file -e "$merge_sha^{commit}" 2>/dev/null; then
     git -C "$repo_dir" fetch -q "$remote" "$merge_sha" 2>/dev/null || true
 fi
@@ -129,26 +151,6 @@ fi
 say "PR #$pr: archiving $task_id into $dest/$task_id/"
 
 # 3. Summary from agy through acpx.
-proxy=${AI_REVIEW_PROXY:-${HTTPS_PROXY:-${https_proxy:-http://127.0.0.1:7890}}}
-if [[ $proxy == none ]]; then
-    unset HTTPS_PROXY HTTP_PROXY https_proxy http_proxy ALL_PROXY all_proxy
-else
-    if [[ $proxy =~ ^[a-z0-9]+://([^/@]+@)?(\[[0-9a-fA-F:]+\]|[^/:@]+):([0-9]+)/?$ ]]; then
-        proxy_host=${BASH_REMATCH[2]} proxy_port=${BASH_REMATCH[3]}
-        proxy_host=${proxy_host#\[}; proxy_host=${proxy_host%\]}
-    else
-        die "AI_REVIEW_PROXY must look like http://host:port, got: $(sed -E 's#://[^/@]+@#://***@#' <<<"$proxy")" 2
-    fi
-    if [[ $dry_run -eq 0 ]]; then
-        need nc
-        nc -z -w 3 "$proxy_host" "$proxy_port" >/dev/null 2>&1 \
-            || die "proxy $proxy_host:$proxy_port is not reachable. Start the proxy client, or set AI_REVIEW_PROXY (\"none\" to connect directly)."
-    fi
-    unset ALL_PROXY all_proxy
-    export HTTPS_PROXY=$proxy HTTP_PROXY=$proxy https_proxy=$proxy http_proxy=$proxy
-    export NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,::1,.local} no_proxy=${NO_PROXY:-localhost,127.0.0.1,::1,.local}
-fi
-
 stage_dir=$work/stage
 if [[ $dry_run -eq 1 ]]; then
     stage_dir=$(mktemp -d "${TMPDIR:-/tmp}/archive-records-dry-run.XXXXXX")

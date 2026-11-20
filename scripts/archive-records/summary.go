@@ -298,7 +298,11 @@ Use task_id %[4]q and pr %[5]d. In "files", list every archived file below with 
 
 `, beginMarker, endMarker, summarySchema, m.TaskID, m.PR.Number)
 
-	fence := "~~~~~~~~"
+	longest := max(longestRun(pr.Body, '~'), longestRun(string(diff), '~'))
+	for _, data := range contents {
+		longest = max(longest, longestRun(string(data), '~'))
+	}
+	fence := strings.Repeat("~", max(4, longest+1))
 	fmt.Fprintf(&b, "## Pull request #%d: %s\n\n%s\n%s\n%s\n\n", pr.Number, oneLine(pr.Title), fence, strings.TrimSpace(pr.Body), fence)
 	b.WriteString("## Archived files\n\n")
 	for _, f := range m.Files {
