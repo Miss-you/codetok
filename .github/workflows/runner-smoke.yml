@@ -10,6 +10,9 @@ name: Runner smoke test
 
 on:
   workflow_dispatch:
+  # TEMPORARY (ENG-011 pre-merge verification): reverted in the next commit.
+  push:
+    branches: [claude/eng-011-self-hosted-runner-e8340a]
 
 permissions:
   contents: read
