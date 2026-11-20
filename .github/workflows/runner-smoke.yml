@@ -10,6 +10,9 @@ name: Runner smoke test
 
 on:
   workflow_dispatch:
+  # TEMPORARY (ENG-014 pre-merge verification): reverted in the next commit.
+  push:
+    branches: [claude/eng-014-runner-pool-workspace-reuse-1a9183]
 
 permissions:
   contents: read
