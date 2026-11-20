@@ -1,21 +1,23 @@
 # Self-hosted macOS runner
 
 codetok's regular CI (`.github/workflows/ci.yml`, `release.yml`) runs on GitHub-hosted
-runners and stays there. One self-hosted runner, on the maintainer's Mac, exists only for
+runners and stays there. A small pool of self-hosted runners on the maintainer's Mac exists only for
 jobs that need this machine's local tools and login state: `acpx`, `agy`, `gh`, and the
 local proxy. AI review (#54), post-merge archiving (#57) and automated optimization (#58)
-build on it. Tracking issue: #56, task `ENG-011`.
+build on it. Tracking issues: #56 (`ENG-011`, the runner) and #63 (`ENG-014`, the pool,
+workspace reuse and per-job cleanup).
 
 ## Summary
 
 | Item | Value |
 | --- | --- |
 | Scope | Repository runner, registered to `Miss-you/codetok` only |
-| Install dir | `~/actions-runner/codetok` (one directory per repository) |
-| Runner name | `codetok-mac-mini` |
-| Labels | `self-hosted`, `macOS`, `ARM64` (defaults) + `codetok-local`, `ai` |
-| Service | launchd LaunchAgent `actions.runner.Miss-you-codetok.codetok-mac-mini`, runs as the login user (not root) |
-| Work dir | `~/actions-runner/codetok/_work` |
+| Instances | 3: `~/actions-runner/codetok` (`codetok-mac-mini`), `~/actions-runner/codetok-2` (`codetok-mac-mini-2`), `~/actions-runner/codetok-3` (`codetok-mac-mini-3`) |
+| Labels | Same on every instance: `self-hosted`, `macOS`, `ARM64` (defaults) + `codetok-local`, `ai` |
+| Service | One launchd LaunchAgent per instance, `actions.runner.Miss-you-codetok.<name>`, runs as the login user (not root) |
+| Work dir | `<instance>/_work`, kept between jobs (incremental fetch), cleaned by job hooks |
+| Shared | `~/actions-runner/_shared/hooks` (job hooks), `~/actions-runner/_shared/cache/{go-mod,go-build,golangci-lint}` |
+| Setup | `scripts/runner/setup-pool.sh` (idempotent; `--dry-run` prints the commands) |
 | Smoke test | `.github/workflows/runner-smoke.yml` (manual `workflow_dispatch` only) |
 
 ## Conventions for workflows that use this runner
@@ -176,9 +178,131 @@ The registration token expires after one hour and is used only once; the runner 
 keeps its own credentials in `.credentials` / `.runner` inside the install directory.
 Never copy those files into a repository.
 
+## Runner pool, workspace reuse and cleanup (ENG-014)
+
+### Why 3 instances
+
+The Mac is a Mac mini M4 (10 cores: 4 performance + 6 efficiency, 32 GB RAM). The jobs on
+this runner are of two kinds:
+
+- AI jobs (#57 archive, #58 optimize, AI review): mostly waiting on `agy` / the network,
+  little CPU.
+- `make test`: `go test -race` over all packages, CPU-bound for about 2 minutes cold and
+  dominated by the `e2e` package (about 150 s even with a warm build cache).
+
+Three instances let the three workflow kinds (smoke, archive, optimize) run at the same
+time. Two concurrent `go test -race` runs already use every core; a fourth instance would
+only make CPU-bound jobs slower and the Mac less usable for interactive work, while queuing
+is rare at this repository's job volume. Each instance holds about 440 MB of runner build
+plus its `_work`; memory stays far below 32 GB. Change the count with
+`scripts/runner/setup-pool.sh --count N` (adding instances is safe; removing one is the
+"Remove the runner" steps below for that directory).
+
+### Layout
+
+```text
+~/actions-runner/
+  codetok/      instance 1 (ENG-011), codetok-mac-mini
+  codetok-2/    instance 2, codetok-mac-mini-2
+  codetok-3/    instance 3, codetok-mac-mini-3
+    .env        proxy + managed block (caches, hooks)   <- per instance, same content
+    _work/codetok/codetok/   persistent checkout          <- per instance
+  _shared/
+    hooks/job-hook.sh, job-started.sh, job-completed.sh  <- copied from scripts/runner/
+    cache/go-mod, cache/go-build, cache/golangci-lint     <- shared by all instances
+```
+
+`setup-pool.sh` writes this block into every instance's `.env` (between
+`# >>> codetok runner pool` and `# <<<` markers), which the runner applies to its own
+process and to every job:
+
+```text
+GOMODCACHE=~/actions-runner/_shared/cache/go-mod
+GOCACHE=~/actions-runner/_shared/cache/go-build
+GOLANGCI_LINT_CACHE=~/actions-runner/_shared/cache/golangci-lint
+ACTIONS_RUNNER_HOOK_JOB_STARTED=~/actions-runner/_shared/hooks/job-started.sh
+ACTIONS_RUNNER_HOOK_JOB_COMPLETED=~/actions-runner/_shared/hooks/job-completed.sh
+```
+
+(`.env` holds absolute paths; `~` is shorthand here.) The Go caches are separate from the
+maintainer's own `~/go/pkg/mod` and `~/Library/Caches/go-build`, so pruning them never
+touches interactive work. Both Go caches are safe for concurrent use by several `go`
+processes.
+
+### Workspace reuse
+
+The runner keeps `<instance>/_work/<repo>/<repo>` between jobs. When `.git` already
+exists there, `actions/checkout` fetches only new objects into it instead of cloning. Use
+these checkout settings in jobs on this runner:
+
+```yaml
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0              # cheap on a reused .git; gives origin/main for merge-base
+          clean: true                 # default; git clean -ffdx + reset --hard before checkout
+          persist-credentials: false  # unless the job pushes
+```
+
+Keep the default checkout `path`; the hooks clean the default workspace only.
+
+### Per-job cleanup (job hooks)
+
+`scripts/runner/job-hook.sh` runs as the runner's job-started and job-completed hook. It
+is copied to `_shared/hooks`, so a branch or PR cannot change what it executes; re-run
+`setup-pool.sh` after changing it.
+
+| Phase | What it does |
+| --- | --- |
+| started | In `$GITHUB_WORKSPACE`: remove persisted checkout credentials (`http.*.extraheader`, `includeIf.*.path`), abort a half-done rebase/merge, `git reset --hard`, `git clean -ffdx` (also nested repos and ignored files). Keeps `.git`. Empties the workspace if it is not a git checkout. Catches leftovers when a previous job crashed. |
+| completed | The same reset, so build outputs (`bin/`, coverage), AI scratch files and tokens do not sit on disk until the next job. Then bounded cache cleanup (below). |
+
+The runner itself empties `_work/_temp` (`$RUNNER_TEMP`) for every job; put AI output
+(such as `AI_REVIEW_OUT_DIR`) there.
+
+The hook refuses to touch any path outside `~/actions-runner/`, prints only short status
+lines (no paths, no environment), and always exits 0, so a cleanup problem is logged but
+never fails a job.
+
+### Bounded cache cleanup
+
+At the end of each job the completed hook checks the shared caches against size caps and
+clears a cache that is over its cap:
+
+| Cache | Cap (MB) | Override in `.env` |
+| --- | --- | --- |
+| `GOCACHE` | 10240 | `CODETOK_RUNNER_GOCACHE_MAX_MB` |
+| `GOMODCACHE` | 4096 | `CODETOK_RUNNER_GOMODCACHE_MAX_MB` |
+| `GOLANGCI_LINT_CACHE` | 2048 | `CODETOK_RUNNER_LINTCACHE_MAX_MB` |
+| `_diag/*.log` (all instances) | age 14 days | `CODETOK_RUNNER_DIAG_MAX_AGE_DAYS` |
+
+`GOCACHE` also trims itself (Go drops entries unused for 5 days). A cache is cleared only
+when no other instance is running a job (no other `Runner.Worker` process), and only one
+instance prunes at a time (`_shared/prune.lock`); otherwise the next job retries. A cleared
+cache makes the next job cold, not wrong. For codetok the caches stay well under the caps:
+about 370 MB of modules and 430 MB of build cache.
+
+### Why not ephemeral runners
+
+Ephemeral runners (`config.sh --ephemeral`) take one job and unregister. On GitHub-hosted
+or VM-based runners that gives a fresh machine per job. Here it would not:
+
+- There is no VM layer on this Mac. An ephemeral runner still runs as the same user with
+  the same `$HOME`, keychain, `agy`/`gh` login state and proxy, which is exactly what the
+  AI jobs need. The isolation gain is a fresh `_work` directory, which the job hooks
+  already provide.
+- Every job would start with a full clone and, unless caches are shared anyway, a cold Go
+  build (266 s cold vs a few seconds warm, see `workspace/ENG-014/verification.md`).
+- Something has to re-register a runner after each job: a long-running controller holding a
+  credential that can mint registration tokens. That is more moving parts and a standing
+  admin credential on the machine, for no security gain while fork PRs never reach this
+  runner anyway.
+
+Revisit this if the runner ever has to run untrusted code: the answer then is per-job VMs
+(for example Tart on Apple silicon), not ephemeral runners on the host.
+
 ## Service management
 
-Run from `~/actions-runner/codetok`:
+Run from the instance directory (`~/actions-runner/codetok`, `codetok-2`, `codetok-3`):
 
 ```bash
 ./svc.sh status      # launchd state
@@ -187,8 +311,8 @@ Run from `~/actions-runner/codetok`:
 ./svc.sh uninstall   # remove the LaunchAgent (keeps the registration)
 ```
 
-Logs: `~/Library/Logs/actions.runner.Miss-you-codetok.codetok-mac-mini/` and
-`~/actions-runner/codetok/_diag/`.
+Logs: `~/Library/Logs/actions.runner.Miss-you-codetok.<name>/` and `<instance>/_diag/`.
+Hook output appears in the job log under "Set up runner" / "Complete runner".
 
 GitHub side:
 
@@ -217,9 +341,15 @@ and `agy` login state, which a daemon running before login cannot reach.
 
 ## Maintenance
 
-- `_work` keeps checkouts between runs. Clean it now and then, when no job is running:
-  `./svc.sh stop && rm -rf ~/actions-runner/codetok/_work/* && ./svc.sh start`.
-- The runner updates itself automatically when GitHub releases a new version.
+- `_work` keeps checkouts between runs on purpose; the job hooks clean the tree. To start an
+  instance from scratch (for example a corrupted `.git`), when it is idle:
+  `./svc.sh stop && rm -rf _work/* && ./svc.sh start` in its directory.
+- To reset the shared caches by hand, when no instance is busy:
+  `chmod -R u+w ~/actions-runner/_shared/cache && rm -rf ~/actions-runner/_shared/cache/*`.
+- After changing `scripts/runner/job-hook.sh`, re-run `scripts/runner/setup-pool.sh` to
+  install it (it only restarts instances whose `.env` changed and that are idle).
+- The runner updates itself automatically when GitHub releases a new version. Instances
+  update independently.
 
 ## Troubleshooting
 
@@ -232,3 +362,5 @@ and `agy` login state, which a daemon running before login cannot reach.
 | `agy` fails with `authentication required` only under the runner | The LaunchAgent still has `SessionCreate=true` (e.g. after `./svc.sh install`). Delete the key with `PlistBuddy` (see Install) and `./svc.sh stop && ./svc.sh start`. |
 | `agy` asks to log in | The login state expired. Log in again interactively as the same user; the service picks it up. |
 | A fork PR shows "approval required" | Expected. Do not approve a fork PR run that would target this runner; the fork guard skips such jobs anyway. |
+| A job sees files from a previous job | The hooks are not configured on that instance. Check the job log for `[runner-hook:started]` lines and that its `.env` has the managed block; re-run `scripts/runner/setup-pool.sh`. |
+| Smoke step "Check runner pool setup" fails | Same as above, or the instance was restarted before `setup-pool.sh` wrote `.env`. |
