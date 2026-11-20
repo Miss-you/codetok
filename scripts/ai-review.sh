@@ -42,16 +42,18 @@
 #   terminal capability is not advertised. Without --no-terminal the model asks to
 #   run commands, the request is denied, and acpx aborts with PERMISSION_DENIED.
 # - agy retries a transient API error by itself and acpx still prints
-#   "⚠ API error (attempt N)". Such a line does not fail the run when the review
-#   finished with "[done] end_turn".
+#   "⚠ API error (attempt N)". When acpx exits 0 and the output ends with
+#   "[done] end_turn", the review finished, so "⚠" lines only produce a warning.
 set -euo pipefail
 
+caller_dir=$(pwd)
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 repo_root=$(pwd)
 repo_slug=Miss-you/codetok
 
 die() { printf 'ai-review: %s\n' "$1" >&2; exit "${2:-1}"; }
-arg_text() { if [[ $1 == @* ]]; then cat "${1#@}"; else printf '%s' "$1"; fi; }
+# @file paths are relative to the caller's directory, not the repository root.
+arg_text() { if [[ $1 == @* ]]; then (cd "$caller_dir" && cat "${1#@}"); else printf '%s' "$1"; fi; }
 
 pr='' what='' requirements='' dry_run=0 positional=()
 while [[ $# -gt 0 ]]; do
@@ -99,10 +101,13 @@ if [[ -n $pr ]]; then
     pr_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1]) or "")' "$1" <<<"$pr_json"; }
     base_branch=$(pr_field baseRefName)
     head=$(pr_field headRefOid)
-    git fetch -q origin "+refs/heads/$base_branch:refs/remotes/origin/$base_branch" "pull/$pr/head" \
-        || die "cannot fetch PR $pr from origin"
-    base=$(git merge-base "refs/remotes/origin/$base_branch" "$head") \
-        || die "cannot find a merge base between origin/$base_branch and the PR head"
+    # Fetch from the repository URL, not "origin": in a fork checkout origin has no PR refs.
+    repo_url=https://github.com/$repo_slug.git
+    git fetch -q "$repo_url" "refs/heads/$base_branch" || die "cannot fetch $base_branch from $repo_url"
+    base_tip=$(git rev-parse FETCH_HEAD)
+    git fetch -q "$repo_url" "refs/pull/$pr/head" || die "cannot fetch PR $pr from $repo_url"
+    base=$(git merge-base "$base_tip" "$head") \
+        || die "cannot find a merge base between $base_branch and the PR head"
     [[ -n $what ]] || what="PR #$pr: $(pr_field title)"
     [[ -n $requirements ]] || requirements=$(pr_field body)
 else
@@ -119,12 +124,13 @@ head=$(git rev-parse "$head")
 
 template=${AI_REVIEW_TEMPLATE:-}
 if [[ -z $template ]]; then
-    for candidate in \
-        "${HOME:-}/.agents/skills/superpowers/requesting-code-review/code-reviewer.md" \
-        "${HOME:-}/.codex/skills/requesting-code-review/code-reviewer.md" \
-        $(ls -1d "${HOME:-}"/.claude/plugins/cache/*/superpowers/*/skills/requesting-code-review/code-reviewer.md 2>/dev/null | sort -V -r); do
+    while IFS= read -r candidate; do
         if [[ -f $candidate ]]; then template=$candidate; break; fi
-    done
+    done < <(
+        printf '%s\n' "${HOME:-}/.agents/skills/superpowers/requesting-code-review/code-reviewer.md" \
+            "${HOME:-}/.codex/skills/requesting-code-review/code-reviewer.md"
+        ls -1d "${HOME:-}"/.claude/plugins/cache/*/superpowers/*/skills/requesting-code-review/code-reviewer.md 2>/dev/null | sort -V -r
+    )
 fi
 [[ -n $template && -f $template ]] \
     || die "prompt template not found: install the superpowers requesting-code-review skill or set AI_REVIEW_TEMPLATE" 2
@@ -158,6 +164,8 @@ values = {
 text = re.sub(r"\{(" + "|".join(values) + r")\}", lambda m: values[m.group(1)], text)
 stat = open(stat_path, encoding="utf-8", errors="replace").read()
 diff = open(diff_path, encoding="utf-8", errors="replace").read()
+# Fences longer than any backtick run inside, so a diff of Markdown cannot close them early.
+fence = "`" * max(3, max((len(r) for r in re.findall(r"`+", stat + diff)), default=0) + 1)
 text += f"""
 
 ## Rules for this run
@@ -170,13 +178,13 @@ text += f"""
 
 ## Diff stat
 
-```
-{stat}```
+{fence}
+{stat}{fence}
 
 ## Full diff ({base[:7]}..{head[:7]})
 
-```diff
-{diff}```
+{fence}diff
+{diff}{fence}
 """
 open(out, "w", encoding="utf-8").write(text)
 PY
@@ -202,20 +210,25 @@ status=0
 # acpx's agent-error lines ("⚠ ..."), which it can print and still exit 0.
 # After a failed exit, also look at the end of the output.
 agent_errors=$(grep -E '^(⚠|AGY_ERROR)' "$review_file" || true)
-# A retried transient API error is harmless when the turn still completed.
-if [[ $status -eq 0 && -n $agent_errors ]] && grep -q '\[done\] end_turn' "$review_file"; then
-    retried=$(grep -E '^⚠ API error \(attempt [0-9]+\)' <<<"$agent_errors" || true)
-    if [[ -n $retried ]]; then
-        printf 'ai-review: agy retried %s transient API error(s); the review completed.\n' \
-            "$(wc -l <<<"$retried" | tr -d ' ')" >&2
-        agent_errors=$(grep -vE '^⚠ API error \(attempt [0-9]+\)' <<<"$agent_errors" || true)
+# A turn that ended normally is a finished review: any "⚠" line before it was
+# either recovered (agy retries transient API errors) or the model's own text.
+last_line=$(grep -v '^[[:space:]]*$' "$review_file" | tail -n 1 || true)
+if [[ $status -eq 0 && $last_line == '[done] end_turn' ]]; then
+    if [[ -n $agent_errors ]]; then
+        printf 'ai-review: the review completed; %s "⚠" line(s) before it were not fatal, first: %s\n' \
+            "$(wc -l <<<"$agent_errors" | tr -d ' ')" "$(head -n 1 <<<"$agent_errors")" >&2
     fi
+    agent_errors=''
 fi
 diag=$agent_errors
 [[ $status -eq 0 ]] || diag+=$'\n'$(tail -n 20 "$review_file")
 hint=''
 if grep -q 'User location is not supported' <<<"$diag"; then
-    hint="the API rejected the request's region. The proxy ($shown_proxy) exits in an unsupported region; switch the proxy node (for example to the US) and rerun."
+    if [[ $shown_proxy == none ]]; then
+        hint="the API rejected the request's region. This machine connects directly from an unsupported region; set AI_REVIEW_PROXY to a proxy in a supported region and rerun."
+    else
+        hint="the API rejected the request's region. The proxy ($shown_proxy) exits in an unsupported region; switch the proxy node (for example to the US) and rerun."
+    fi
 elif grep -q 'is not recognized as a known model\|did not advertise that model' <<<"$diag"; then
     hint="agy did not offer the model. Without a working proxy agy cannot load its model list; check AI_REVIEW_PROXY and AI_REVIEW_MODEL."
 elif grep -q 'PERMISSION_DENIED' <<<"$diag"; then

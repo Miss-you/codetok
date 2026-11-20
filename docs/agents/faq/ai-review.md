@@ -1,8 +1,6 @@
 # AI review FAQ
 
-Known problems with `scripts/ai-review.sh`, acpx, and the Antigravity CLI (`agy`). Search here first when a review fails. After solving a new problem, add an entry (or bump the count of an existing one) in the same format.
-
-Most entries were first hit in another project that uses the same script; the counts start there.
+Known problems with `scripts/ai-review.sh`, acpx, and the Antigravity CLI (`agy`). Search here first when a review fails. After solving a new problem, add an entry in the same format, or update the existing one.
 
 <a id="user-location"></a>
 ## `User location is not supported`
@@ -49,7 +47,7 @@ Most entries were first hit in another project that uses the same script; the co
 
 - **现象**：acpx 输出 `⚠ API error (attempt N) ... EOF`，但末尾有完整 review 和 `[done] end_turn`。
 - **原因**：agy 遇到瞬时网络错误后自动重试成功。
-- **处理**：脚本在 acpx 正常退出且看到 `[done] end_turn` 时忽略这类行，只打印一行提示。在 `AI review:` 评论里注明发生过重试即可。若没有 `[done] end_turn`，按失败处理。
+- **处理**：acpx 正常退出且输出最后一行是 `[done] end_turn` 时，脚本把 `⚠` 行只当警告打印，不判失败。在 `AI review:` 评论里注明发生过重试即可。最后一行不是 `[done] end_turn` 时按失败处理。
 
 <a id="template-not-found"></a>
 ## `prompt template not found`
