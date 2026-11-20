@@ -133,8 +133,9 @@ proxy credentials (`user:pass@`) in it.
 - Use `actions/checkout` with `persist-credentials: false` unless the job pushes.
 - Never `set -x` around commands that take tokens, and never print raw `gh auth token` or
   `agy` JSON payloads; print only the fields you need.
-- Logs of a public repository are world-readable. Do not print the user name, home
-  directory or full `PATH`, and do not echo model output unchecked (it can inject
+- Logs of a public repository are world-readable. The runner's work-directory path (and
+  so the local user name) already shows up in `actions/checkout` output; do not add more:
+  no home directory dumps, no full `PATH`, no `env`, and do not echo model output unchecked (it can inject
   `::workflow-commands::`).
 - Pin third-party actions by commit SHA on this runner.
 
@@ -149,9 +150,27 @@ token=$(gh api -X POST repos/Miss-you/codetok/actions/runners/registration-token
 ./config.sh --unattended --url https://github.com/Miss-you/codetok --token "$token" \
   --name codetok-mac-mini --labels codetok-local,ai --work _work
 unset token
+# The Mac reaches github.com only through the local proxy, and launchd does not pass the
+# shell's proxy variables. The runner loads .env into its own and every job's environment.
+cat >> .env <<'ENV'
+HTTPS_PROXY=http://127.0.0.1:7890
+HTTP_PROXY=http://127.0.0.1:7890
+https_proxy=http://127.0.0.1:7890
+http_proxy=http://127.0.0.1:7890
+NO_PROXY=localhost,127.0.0.1,::1,.local
+no_proxy=localhost,127.0.0.1,::1,.local
+ENV
 ./svc.sh install
+# svc.sh's plist sets SessionCreate=true, which gives the job its own security session
+# without access to the login keychain, where agy keeps its login ("authentication
+# required"; agy log: "Failed to load stored token from keyring ... exit status 36").
+# Drop it so the runner runs in the user's login session, like a Terminal window.
+/usr/libexec/PlistBuddy -c 'Delete :SessionCreate' \
+  ~/Library/LaunchAgents/actions.runner.Miss-you-codetok.codetok-mac-mini.plist
 ./svc.sh start
 ```
+
+Re-running `./svc.sh install` rewrites the plist; repeat the `PlistBuddy` line afterwards.
 
 The registration token expires after one hour and is used only once; the runner then
 keeps its own credentials in `.credentials` / `.runner` inside the install directory.
@@ -207,7 +226,9 @@ and `agy` login state, which a daemon running before login cannot reach.
 | Symptom | Cause / fix |
 | --- | --- |
 | `agy: command not found` / `acpx: command not found` | The job did not pin `PATH`. Add the "Pin tool PATH" step. Or re-run `./env.sh` from a login shell and `./svc.sh stop && ./svc.sh start` to refresh `.path`. |
+| `actions/checkout` fails with `Empty reply from server` / `Failed to connect to github.com port 443` | The runner has no proxy. Add the proxy lines to `~/actions-runner/codetok/.env` (see Install) and `./svc.sh stop && ./svc.sh start`. |
 | `agy` says the model is unknown, times out, or "User location is not supported" | No proxy or a proxy exit node in an unsupported region. Check `AI_REVIEW_PROXY` and that the proxy client is running (`nc -z 127.0.0.1 7890`). |
 | Job stays "Waiting for a runner" | Runner offline (Mac asleep, user logged out, service stopped). Check `./svc.sh status` and the Runners page. Prevent sleep with `caffeinate` or Energy settings if the jobs are scheduled. |
+| `agy` fails with `authentication required` only under the runner | The LaunchAgent still has `SessionCreate=true` (e.g. after `./svc.sh install`). Delete the key with `PlistBuddy` (see Install) and `./svc.sh stop && ./svc.sh start`. |
 | `agy` asks to log in | The login state expired. Log in again interactively as the same user; the service picks it up. |
 | A fork PR shows "approval required" | Expected. Do not approve a fork PR run that would target this runner; the fork guard skips such jobs anyway. |
