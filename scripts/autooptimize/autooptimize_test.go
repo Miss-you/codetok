@@ -41,6 +41,10 @@ func TestParseLintSkipsExcludedAndTestdataPaths(t *testing.T) {
 	if cs[0].Package != "provider/kimi" || cs[0].Source != "golangci-lint/errcheck" || cs[0].Line != 40 {
 		t.Errorf("first candidate = %+v", cs[0])
 	}
+	dotted, err := parseLint([]byte(`{"Issues":[{"FromLinter":"x","Text":"t","Pos":{"Filename":"./scripts/a.go","Line":1}},{"FromLinter":"x","Text":"t","Pos":{"Filename":"./cmd/b.go","Line":1}}]}`))
+	if err != nil || len(dotted) != 1 || dotted[0].File != "cmd/b.go" || dotted[0].Package != "cmd" {
+		t.Errorf("./-prefixed paths: %+v %v", dotted, err)
+	}
 	if _, err := parseLint([]byte("not json")); err == nil {
 		t.Error("want an error for malformed JSON")
 	}
@@ -373,6 +377,7 @@ func TestReviewVerdict(t *testing.T) {
 		{"noneof.md", false, "1 Critical/Important"},
 		{"nosections.md", false, "no Critical and Important sections"},
 		{"summarytitle.md", true, "no Critical/Important"},
+		{"trace.md", true, "no Critical/Important"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {

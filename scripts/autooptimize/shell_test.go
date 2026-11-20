@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -215,5 +216,51 @@ func TestShellGuardDetectsAndUndoesTampering(t *testing.T) {
 				t.Error("exclude change survived")
 			}
 		})
+	}
+}
+
+func TestShellRunAgentRequiresAFinishedTurn(t *testing.T) {
+	repo := tempRepo(t)
+	out := t.TempDir()
+	ao := writeFile(t, out, "autooptimize", "binary")
+	writeFile(t, out, "candidate.json", `{"id":"x"}`)
+	writeFile(t, out, "prompt.md", "do it")
+	tests := []struct {
+		name   string
+		log    string
+		status int
+		want   int
+	}{
+		{"finished", `printf '[tool] x\nDone.\n[done] end_turn\n'`, 0, 0},
+		{"exit 0 after an API error", `printf '⚠ API error (attempt 3)\n'`, 0, 1},
+		{"denied but finished", `printf '[tool] grep (failed)\n[done] end_turn\n\n'`, 5, 0},
+		{"denied and stopped", `printf '[tool] grep (failed)\n'`, 5, 5},
+		{"timeout", `printf 'partial\n[done] end_turn\n'`, 3, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `out=$OUT repo_root=$PWD ao=$AO model=m agent_timeout=1
+agy() { :; }
+acpx() { ` + tt.log + `; return ` + strconv.Itoa(tt.status) + `; }
+run_agent "$out/prompt.md" "$out/agent.log"; echo "rc=$?"`
+			res, code := runShell(t, repo, body, "OUT="+out, "AO="+ao)
+			if code != 0 || !strings.Contains(res, "rc="+strconv.Itoa(tt.want)) {
+				t.Errorf("code %d, output %q, want rc=%d", code, res, tt.want)
+			}
+		})
+	}
+}
+
+func TestShellNoSecretsRemovesFlaggedFiles(t *testing.T) {
+	dir := t.TempDir()
+	f := writeFile(t, dir, "pr-body.md", "token ghp_"+strings.Repeat("Q9", 18)+"\n")
+	g := writeFile(t, dir, "review-comment.md", "clean\n")
+	if _, code := runShell(t, dir, `no_secrets "$F" "$G"`, "F="+f, "G="+g); code != 3 {
+		t.Fatalf("code %d, want give_up", code)
+	}
+	for _, p := range []string{f, g} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s still exists and would be uploaded", filepath.Base(p))
+		}
 	}
 }

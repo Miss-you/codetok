@@ -68,8 +68,10 @@ main() {
 
     go_path=$(go env GOPATH) go_cache=$(go env GOCACHE) go_modcache=$(go env GOMODCACHE)
     # A reused out dir must not carry state or reports from an earlier run.
-    (cd "$out" && rm -rf rounds guard.diff guard-*.txt failure.md check.txt numstat.txt test.log make-lint.log \
-        verdict.txt pr-body.md review-comment.md review review.log agent-*.log prompt-*.md out-of-scope.txt)
+    (cd "$out" && rm -rf rounds guard.diff guard-*.txt git-backup failure.md check.txt numstat.txt test.log \
+        make-lint.log verdict.txt pr-body.md review-comment.md review review.log review-what.md \
+        review-requirements.md agent-*.log prompt-*.md out-of-scope.txt candidates.* candidate.json \
+        open-prs.json closed-prs.json lint.json lint.log deadcode.json deadcode.log cover.txt step.err)
     # Bootstrap build for the open-PR gate; rebuilt from the base commit below.
     ao="$out/autooptimize"
     go build -o "$ao" ./scripts/autooptimize
@@ -77,6 +79,8 @@ main() {
     if [[ $mode != dry-run ]]; then
         [[ -z $(git status --porcelain) ]] || die "the working tree is not clean; refusing to run"
         setup_proxy
+    elif [[ -n ${AUTO_OPTIMIZE_PROXY:-} ]]; then
+        setup_proxy # a dry run uses the proxy only when it is set explicitly
     fi
     if [[ $mode == pr ]]; then
         gh label list -R "$repo_slug" --search "$label" --limit 100 --json name --jq '.[].name' | grep -qxF "$label" \
@@ -234,6 +238,9 @@ guard_snapshot() {
     guard_state >"$out/guard-before.txt"
 }
 
+# Ignored directories that already exist (bin/, output/ in a local checkout)
+# show up as one "!! dir/" line, so files inside them are not tracked one by
+# one. The runner starts from a fresh checkout, where none exist.
 guard_state() {
     guard_files | while IFS= read -r f; do shasum -a 256 "$f"; done
     echo "-- ignored --"
@@ -268,6 +275,7 @@ no_secrets() {
     # Token prefixes must start a word, so prose like "task-..." does not match.
     local tokens='gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}'
     if grep -n -E "(^|[^A-Za-z0-9_-])($tokens)|-----BEGIN [A-Z ]*PRIVATE KEY" "$@" >/dev/null; then
+        rm -f -- "$@" # keep them out of the uploaded artifact too
         give_up "the PR text looks like it contains a credential; nothing was published"
     fi
 }
@@ -306,13 +314,17 @@ run_agent() {
         --suppress-reads --model "$model" --timeout "$agent_timeout" --format text --agent "$(command -v agy) acp" \
         exec -f "$1" >"$2" 2>&1 || status=$?
     guard_check
-    [[ $status -ne 0 ]] || return 0
-    # Exit 5: every permission request was denied (usually a shell command).
-    # If the turn still ended normally, let the checks judge what was edited.
-    if [[ $status -eq 5 ]] && tr -d '\r' <"$2" | grep -v '^[[:space:]]*$' | tail -n 1 | grep -q '^\[done\] end_turn'; then
-        log "the agent asked for a denied permission (see $(basename "$2")); continuing with its edits"
+    # A turn counts only if it ended normally: acpx can exit 0 after an agent
+    # or API error. Exit 5 means every permission request was denied (usually
+    # a shell command); if the turn still ended normally, the checks judge
+    # what was edited.
+    local ended=0
+    tr -d '\r' <"$2" | grep -v '^[[:space:]]*$' | tail -n 1 | grep -q '^\[done\] end_turn' || ended=1
+    if [[ $ended -eq 0 && ( $status -eq 0 || $status -eq 5 ) ]]; then
+        [[ $status -eq 0 ]] || log "the agent asked for a denied permission (see $(basename "$2")); continuing with its edits"
         return 0
     fi
+    [[ $status -ne 0 ]] || status=1
     return "$status"
 }
 

@@ -208,7 +208,10 @@ var (
 	headingLine = regexp.MustCompile(`^#{1,6}\s+(.*)$`)
 	boldLine    = regexp.MustCompile(`^\*\*([^*]+)\*\*:?$`) // a whole line in bold, used as a title
 	itemLine    = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+(.*)$`)
-	noneItem    = regexp.MustCompile(`(?i)^(none|n/a|nothing|no issues?)( found)?\.?$`)
+	// acpx trace lines around the answer: tool calls, their input/output, and
+	// the end-of-turn marker. They are never part of the review.
+	traceLine = regexp.MustCompile(`^(\[(client|tool|done|thinking)\]|  (input|output|kind|files):)`)
+	noneItem  = regexp.MustCompile(`(?i)^(none|n/a|nothing|no issues?)( found)?\.?$`)
 )
 
 // sectionFor maps a title to "critical", "important", "other" (a known
@@ -249,6 +252,9 @@ func reviewVerdict(review string) (bool, string) {
 	seen := map[string]bool{}
 	section, inFence := "", false
 	for _, line := range strings.Split(review, "\n") {
+		if traceLine.MatchString(line) {
+			continue
+		}
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 			inFence = !inFence

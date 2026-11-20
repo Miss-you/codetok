@@ -61,3 +61,16 @@ Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
 | Bold sub-titles like "Summary of problem" ended the Critical section | Minor | Only the template's own section titles (prefix match) end a section. |
 | `config.worktree` watched but not restored | Minor | Backed up and restored. Pre-existing ignored directories are not hashed file by file; the runner's checkout is fresh each run (documented in the code comment). |
 | `gh label list` default page size | Minor | `--limit 100`. |
+
+### PR #62, head f0d74fa (round 4)
+
+Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
+
+| Finding | Level | Action |
+| --- | --- | --- |
+| On a secret hit, the flagged PR body/comment were still uploaded as artifacts | Important | `no_secrets` deletes the flagged files before `give_up`; tested. |
+| `acpx` exit 0 after an API error counted as a finished turn, then an empty diff abandoned the candidate | Important | A turn counts only if it ends with `[done] end_turn` (exit 0 or 5); otherwise `give_up`. Tested with a stubbed `acpx`. |
+| Verdict parser read acpx trace lines (`[done] end_turn` inside the last section) | Important | `reviewVerdict` skips trace lines; fixture `trace.md`. |
+| Reused out dir kept other per-run files | Minor | Cleanup list covers every per-run file. |
+| Pre-existing ignored dirs comment missing | Minor | Comment on `guard_state`. |
+| `./`-prefixed tool paths bypassed exclusions; dry run without proxy | Minor | `cleanPath` (`path.Clean`), tested; dry run uses `AUTO_OPTIMIZE_PROXY` when set. |

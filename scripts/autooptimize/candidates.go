@@ -94,6 +94,15 @@ func isExcludedPath(p string) bool {
 	return false
 }
 
+// cleanPath turns a tool-reported path into a clean, slash-separated,
+// repo-relative path ("./cmd/a.go" -> "cmd/a.go"); empty stays empty.
+func cleanPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	return path.Clean(filepath.ToSlash(p))
+}
+
 func pkgDir(file string) string {
 	d := path.Dir(filepath.ToSlash(file))
 	return d
@@ -163,7 +172,7 @@ func parseLint(data []byte) ([]Candidate, error) {
 	}
 	var out []Candidate
 	for _, is := range report.Issues {
-		file := filepath.ToSlash(is.Pos.Filename)
+		file := cleanPath(is.Pos.Filename)
 		if file == "" || isExcludedPath(file) || strings.HasPrefix(file, "testdata/") || strings.Contains(file, "/testdata/") {
 			continue
 		}
@@ -199,7 +208,7 @@ func parseDeadcode(data []byte) ([]Candidate, error) {
 			continue
 		}
 		for _, f := range p.Funcs {
-			file := filepath.ToSlash(f.Position.File)
+			file := cleanPath(f.Position.File)
 			if f.Generated || file == "" || isExcludedPath(file) || strings.HasSuffix(file, "_test.go") {
 				continue
 			}
