@@ -79,7 +79,7 @@ main() {
         setup_proxy
     fi
     if [[ $mode == pr ]]; then
-        gh label list -R "$repo_slug" --search "$label" --json name --jq '.[].name' | grep -qxF "$label" \
+        gh label list -R "$repo_slug" --search "$label" --limit 100 --json name --jq '.[].name' | grep -qxF "$label" \
             || die "label '$label' does not exist in $repo_slug; create it first (docs/auto-optimize.md)"
     fi
 
@@ -227,6 +227,9 @@ guard_snapshot() {
     common=$(git rev-parse --path-format=absolute --git-common-dir)
     rm -rf "$out/git-backup" && mkdir -p "$out/git-backup"
     cp -p "$common/config" "$out/git-backup/config"
+    local gitdir
+    gitdir=$(git rev-parse --absolute-git-dir)
+    [[ ! -f $gitdir/config.worktree ]] || cp -p "$gitdir/config.worktree" "$out/git-backup/config.worktree"
     for d in hooks info; do [[ ! -d $common/$d ]] || cp -Rp "$common/$d" "$out/git-backup/$d"; done
     guard_state >"$out/guard-before.txt"
 }
@@ -246,6 +249,10 @@ guard_check() {
     local common p
     common=$(git rev-parse --path-format=absolute --git-common-dir)
     cp -p "$out/git-backup/config" "$common/config"
+    local gitdir
+    gitdir=$(git rev-parse --absolute-git-dir)
+    rm -f "$gitdir/config.worktree"
+    [[ ! -f $out/git-backup/config.worktree ]] || cp -p "$out/git-backup/config.worktree" "$gitdir/config.worktree"
     for d in hooks info; do
         rm -rf "${common:?}/$d"
         [[ ! -d $out/git-backup/$d ]] || cp -Rp "$out/git-backup/$d" "$common/$d"
@@ -258,7 +265,9 @@ guard_check() {
 
 # no_secrets refuses to publish text that looks like a credential.
 no_secrets() {
-    if grep -n -E 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}' "$@" >/dev/null; then
+    # Token prefixes must start a word, so prose like "task-..." does not match.
+    local tokens='gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}'
+    if grep -n -E "(^|[^A-Za-z0-9_-])($tokens)|-----BEGIN [A-Z ]*PRIVATE KEY" "$@" >/dev/null; then
         give_up "the PR text looks like it contains a credential; nothing was published"
     fi
 }
@@ -517,4 +526,5 @@ relative_paths() {
     sed -e "s#file://${repo_root}/##g" -e "s#${repo_root}/##g" -e "s#file://${HOME}/#~/#g" -e "s#${HOME}/#~/#g"
 }
 
-main "$@"
+# Sourcing the script (tests) defines the functions without running anything.
+[[ ${BASH_SOURCE[0]} != "$0" ]] || main "$@"

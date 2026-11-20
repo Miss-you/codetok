@@ -223,8 +223,10 @@ func sectionFor(title string) string {
 	case strings.HasPrefix(t, "important"):
 		return "important"
 	}
-	for _, other := range []string{"minor", "nice to have", "strength", "recommendation", "assessment", "issues", "summary", "reasoning"} {
-		if strings.Contains(t, other) {
+	// Only the template's own section titles end an issue list; a bold
+	// sub-title such as "Summary of problem" inside Critical does not.
+	for _, other := range []string{"minor", "nice to have", "strength", "recommendation", "assessment", "issues"} {
+		if strings.HasPrefix(t, other) {
 			return "other"
 		}
 	}

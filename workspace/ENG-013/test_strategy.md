@@ -12,6 +12,7 @@ What must be proven, and how:
 | At most 2 fix rounds | `TestRoundBudget` |
 | Review gate | `TestReviewVerdict` (pass with nits, Important items, prose finding, "No", missing verdict) |
 | PR marker round-trips into rejection memory | `TestDescribeAndMarker` |
+| Bash safety helpers (secret scan, review extraction and path scrubbing, out-of-scope revert, tamper guard) | `scripts/autooptimize/shell_test.go` sources the script and runs each helper in temp git repos |
 | Glue works with real tools | `scripts/auto-optimize.sh --dry-run` on this worktree; `--no-pr` rehearsal in a throwaway worktree with real acpx/agy/ai-review (results in `verification.md`) |
 | Workflow on the runner | Manual `workflow_dispatch` after ENG-011 is merged and the runner is online (`todo.md`) |
 

@@ -9,7 +9,7 @@ Before `done` (needs the maintainer, outward-facing):
 
 Later (not in this task):
 
-- A bash-level integration test for `scripts/auto-optimize.sh` (fake `acpx`/`gh` on `PATH` in a temp repo) covering `guard_check`, `revert_out_of_scope` and `review_answer`. Today the glue is covered by two local rehearsals and the Go unit tests.
+- A full-pipeline test of `scripts/auto-optimize.sh` with fake `acpx`/`gh`/`make` on `PATH`. The safety helpers are already unit-tested from Go (`shell_test.go`); the end-to-end flow is covered by the local rehearsals and the runner check above.
 
 - Optional post-merge trigger (the issue lists it as optional; only schedule and manual for now).
 - If merge rate stays low for a candidate kind, drop or retune that kind (`AUTO_OPTIMIZE_MIN_COVERAGE`, ignore lists in `scripts/autooptimize/candidates.go`).

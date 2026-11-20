@@ -49,3 +49,15 @@ Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
 | `sectionFor` matched titles that only mention "critical" | Minor | Titles must start with the severity; fixture added. |
 | `-max-lines`/`-max` not validated; root `testdata/` lint; `AUTO_OPTIMIZE_BASE` undocumented | Minor | Validated with tests; skipped; documented. `collectDocDrift` stays non-recursive: `cmd/` has no subpackages. |
 | Recommendation: bash-level integration test | — | Deferred to `todo.md`. |
+
+### PR #62, head b034fed (round 3)
+
+Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
+
+| Finding | Level | Action |
+| --- | --- | --- |
+| `no_secrets` `sk-` pattern matched prose like `task-auto-optimize-...` | Important | Token prefixes must start a word; tested with true and false positives. |
+| No automated tests for the bash safety helpers | Important | Script is sourceable; `scripts/autooptimize/shell_test.go` drives `no_secrets`, `review_answer`/`relative_paths`, `revert_out_of_scope`, and `guard_snapshot`/`guard_check` (hook, git config, ignored file, run state, excludes) in temp repos under `make test`. |
+| Bold sub-titles like "Summary of problem" ended the Critical section | Minor | Only the template's own section titles (prefix match) end a section. |
+| `config.worktree` watched but not restored | Minor | Backed up and restored. Pre-existing ignored directories are not hashed file by file; the runner's checkout is fresh each run (documented in the code comment). |
+| `gh label list` default page size | Minor | `--limit 100`. |
