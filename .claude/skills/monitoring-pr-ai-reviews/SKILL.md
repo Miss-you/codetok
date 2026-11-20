@@ -32,6 +32,8 @@ description: Use when a codetok PR is created or pushed to, so the acpx + agy AI
 
 ## 每次更新都跑 AI review
 
+ChatGPT Codex connector 的自动 review 已关闭（#65），不要等待 `chatgpt-codex-connector[bot]` 的 review。
+
 Copilot review 已不可用。创建 PR 或向 PR push 之后，为新 head 跑一次只读 review：
 
 ```bash
