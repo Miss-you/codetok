@@ -45,6 +45,7 @@ When validating CLI changes with `./bin/codetok`, always run `make build` first 
 - `provider/kimi/` — Kimi CLI parser: reads `wire.jsonl`, extracts `StatusUpdate` token usage
 - `provider/claude/` — Claude Code parser: reads session JSONL, extracts `assistant` message usage with streaming dedup (`messageId:requestId` composite key, last-entry-wins)
 - `provider/codex/` — Codex CLI parser: reads rollout JSONL, extracts last cumulative `token_count` event
+- `provider/antigravity/` — Antigravity CLI/IDE parser: reads `conversations/*.db` (SQLite) read-only, one usage event per `gen_metadata` row (protobuf decoded in-package)
 - `stats/` — aggregation logic (group by day+provider, filter by date range)
 - `e2e/` — end-to-end tests that build the binary and test CLI output; uses `isolatedArgs()` to prevent cross-provider interference
 
@@ -62,6 +63,7 @@ When validating CLI changes with `./bin/codetok`, always run `make build` first 
 ~/.kimi-code/sessions/**/agents/*/wire.jsonl → kimi.Provider.CollectSessions()
 ~/.claude/projects/**/*.jsonl            → claude.Provider.CollectSessions()  (with dedup)
 ~/.codex/sessions/**/*.jsonl             → codex.Provider.CollectSessions()
+~/.gemini/antigravity{-cli,}/conversations/*.db → antigravity.Provider (one event per model call)
     ↓ (all parsed in parallel via ParseParallel)
     → []provider.SessionInfo
     → stats.FilterByDateRange()

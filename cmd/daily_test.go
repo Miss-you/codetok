@@ -1246,6 +1246,7 @@ func newDailyTestCommand() *cobra.Command {
 	cmd.Flags().String("claude-dir", "", "")
 	cmd.Flags().String("codex-dir", "", "")
 	cmd.Flags().String("cursor-dir", "", "")
+	cmd.Flags().String("antigravity-dir", "", "")
 	return cmd
 }
 

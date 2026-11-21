@@ -22,7 +22,7 @@ var rootCmd = &cobra.Command{
 	Short: "Track token usage across coding CLI tools",
 	Long: `codetok aggregates and visualizes token usage from multiple
 AI coding CLI tools including Claude Code, OpenCode, Codex CLI,
-Kimi Code, and Cursor.`,
+Kimi Code, Antigravity, and Cursor.`,
 }
 
 var versionCmd = &cobra.Command{

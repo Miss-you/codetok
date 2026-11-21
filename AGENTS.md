@@ -77,5 +77,6 @@ When adding or changing a provider:
 
 ## Pull Request Review
 
+- The ChatGPT Codex connector auto review is disabled (#65); do not wait for `chatgpt-codex-connector[bot]` reviews.
 - Copilot review is not available. After creating a PR or pushing to it, run the read-only Gemini 4 Hydrogen review `scripts/ai-review.sh --pr <number>` (acpx + Antigravity CLI `agy`) for the new head and post the result as an `AI review: <full head SHA>` comment. `monitoring-pr-ai-reviews` describes the comment format, failure handling, and how findings gate the merge.
 - When `scripts/ai-review.sh`, acpx, or agy fails, check `docs/agents/faq/ai-review.md` first and add or update an entry after solving a new problem.

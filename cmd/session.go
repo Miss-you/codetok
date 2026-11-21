@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/miss-you/codetok/provider"
+	_ "github.com/miss-you/codetok/provider/antigravity"
 	_ "github.com/miss-you/codetok/provider/claude"
 	_ "github.com/miss-you/codetok/provider/codex"
 	_ "github.com/miss-you/codetok/provider/cursor"
@@ -39,12 +40,13 @@ func init() {
 	sessionCmd.Flags().String("since", "", "Start date filter (format: 2006-01-02)")
 	sessionCmd.Flags().String("until", "", "End date filter (format: 2006-01-02)")
 	sessionCmd.Flags().String("timezone", "", "Timezone for date filters (IANA name, default: local)")
-	sessionCmd.Flags().String("provider", "", "Filter by provider name (e.g. kimi, claude, codex, cursor)")
+	sessionCmd.Flags().String("provider", "", "Filter by provider name (e.g. kimi, claude, codex, cursor, antigravity)")
 	sessionCmd.Flags().String("base-dir", "", "Override default data directory (applies to all providers)")
 	sessionCmd.Flags().String("kimi-dir", "", "Override Kimi Code data directory")
 	sessionCmd.Flags().String("claude-dir", "", "Override Claude Code data directory")
 	sessionCmd.Flags().String("codex-dir", "", "Override Codex CLI data directory")
 	sessionCmd.Flags().String("cursor-dir", "", "Override Cursor CSV directory; scans only this local path and skips default Cursor imports/synced roots")
+	sessionCmd.Flags().String("antigravity-dir", "", "Override Antigravity data directory (a root containing conversations/); default scans ~/.gemini/antigravity-cli and ~/.gemini/antigravity")
 	rootCmd.AddCommand(sessionCmd)
 }
 
