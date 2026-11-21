@@ -122,6 +122,8 @@ scripts/ai-review.sh --pr <number>
 
 `scripts/ai-review.sh` 是唯一的 review 入口，只在本地运行（agy 需要本机登录和代理），不放进 GitHub Actions。
 
+合并后的归档提交（`docs: archive <task-id> records (#<PR>) [skip ci]`，由 `.github/workflows/archive-records.yml` 直接推到 `main`）不经过 PR，不需要也不应该跑 AI review；提交信息里的 `[skip ci]` 让 push 触发的 workflow 都跳过它。push 修复后要更新 PR 上的记录评论（`scripts/post-records-comment.sh`，就地编辑），这一步不改变 PR head，不触发新一轮 review。
+
 ## Common Mistakes
 
 - 把 AI review 建议当成必须执行

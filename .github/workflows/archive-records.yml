@@ -1,0 +1,79 @@
+# Archive a merged PR's process records into docs/changes/<task-id>/ on main (#57).
+#
+# The delivery flow leaves one PR comment marked <!-- codetok-records:<task-id> -->
+# that lists the process files. After the PR merges, scripts/archive-records.sh
+# copies those files verbatim, asks agy (through acpx) for a schema-checked
+# summary, and pushes one commit to main with the runner user's own git
+# credentials (gh's git credential helper). See docs/changes/AGENTS.md.
+#
+# Loop and safety rules (asserted by scripts/archive-records/workflow_test.go):
+# - Triggers only on push to main and on workflow_dispatch, never on pull_request.
+#   For pull_request events (closed included) GitHub runs the workflow file from
+#   the PR itself, so a fork PR could rewrite this file and run its own job on the
+#   self-hosted runner. Push and dispatch always run the file from main.
+# - Only the repository owner's pushes and dispatches run the job
+#   (github.triggering_actor == github.repository_owner), so jobs on this runner
+#   stay limited to the owner if collaborators are added later.
+# - The archive commit message ends in "[skip ci]": GitHub does not start
+#   push-triggered workflows (this one, CI, any future AI review) for it, and the
+#   job's if: checks the same string. Even if it ran, the commit is not the merge
+#   of a PR, so the script skips it, and the input digest makes a rerun a no-op.
+#   AI review itself (scripts/ai-review.sh) only runs for PR heads, and the
+#   archive never opens a PR.
+# - PRs from forks are not archived: the script checks isCrossRepository.
+name: Archive records
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Number of the merged PR to archive
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archive-records
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    name: Archive records
+    if: >-
+      github.repository == 'Miss-you/codetok' &&
+      github.triggering_actor == github.repository_owner &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' &&
+        !contains(github.event.head_commit.message, '[skip ci]')))
+    runs-on: [self-hosted, codetok-local, ai]
+    timeout-minutes: 30
+    env:
+      AI_REVIEW_PROXY: ${{ vars.AI_REVIEW_PROXY || 'http://127.0.0.1:7890' }}
+      PR_NUMBER: ${{ inputs.pr }}
+    steps:
+      - name: Pin tool PATH
+        run: |
+          for dir in /opt/homebrew/sbin /opt/homebrew/bin "$HOME/go/bin" "$HOME/.local/bin"; do
+            [ -d "$dir" ] && echo "$dir" >> "$GITHUB_PATH"
+          done
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # Push with the runner user's credentials, not GITHUB_TOKEN.
+          persist-credentials: false
+      - name: Archive
+        run: |
+          git config user.name >/dev/null || git config user.name "codetok archive"
+          git config user.email >/dev/null || git config user.email "codetok-archive@users.noreply.github.com"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            case "$PR_NUMBER" in ''|*[!0-9]*) echo "PR number must be digits" >&2; exit 2 ;; esac
+            scripts/archive-records.sh --pr "$PR_NUMBER"
+          else
+            # The PR merged as this push, looked up with the API; a push that is
+            # not a PR merge is skipped by the script.
+            scripts/archive-records.sh --commit "$GITHUB_SHA"
+          fi
