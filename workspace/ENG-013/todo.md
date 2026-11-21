@@ -2,9 +2,9 @@
 
 Before `done` (needs the maintainer, outward-facing):
 
-- [ ] Create the label: `gh label create auto-optimize -R Miss-you/codetok --color 0E8A16 --description "Automated cleanup PR (scripts/auto-optimize.sh, #58)"`. Without it, PR mode stops with an error before doing anything.
-- [ ] After ENG-011 is merged and the runner with labels `codetok-local`, `ai` is online: run `gh workflow run auto-optimize.yml -R Miss-you/codetok -f mode=dry-run`, then `-f mode=pr`. Check the PR is labeled, within 200 lines, has an `AI review:` comment, and CI ran. Then run `mode=pr` again and check it skips because one PR is open.
-- [ ] Confirm the runner's launchd environment (ENG-011 conventions) has `go`, `golangci-lint`, `gh`, `jq`, `acpx`, `agy` on `PATH`, a git identity and credential helper that can push, and `AUTO_OPTIMIZE_PROXY` / `HTTPS_PROXY` for agy.
+- [x] Create the label (done 2026-11-21): `gh label create auto-optimize -R Miss-you/codetok --color 0E8A16 --description "Automated cleanup PR (scripts/auto-optimize.sh, #58)"`. Without it, PR mode stops with an error before doing anything.
+- [ ] ENG-011 is merged and three runners with labels `codetok-local`, `ai` are online (2026-11-21). `workflow_dispatch` needs the workflow file on `main`, so after this PR is merged run `gh workflow run auto-optimize.yml -R Miss-you/codetok -f mode=dry-run`, then `-f mode=pr`. Check the PR is labeled, within 200 lines, has an `AI review:` comment, and CI ran. Then run `mode=pr` again and check it skips because one PR is open.
+- [x] Runner environment: the workflow pins `/opt/homebrew/bin`, `~/go/bin`, `~/.local/bin` (ENG-011 convention) and passes `AI_REVIEW_PROXY`; this Mac's git uses `gh auth git-credential` for github.com and has a git identity. The dry run confirms the rest.
 - [ ] Decide whether to enable the weekly schedule: `gh variable set AUTO_OPTIMIZE_SCHEDULE -R Miss-you/codetok --body true`.
 
 Later (not in this task):

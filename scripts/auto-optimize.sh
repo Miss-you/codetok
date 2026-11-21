@@ -61,7 +61,7 @@ main() {
     out=${AUTO_OPTIMIZE_OUT_DIR:-${TMPDIR:-/tmp}/codetok-auto-optimize/$(date -u +%Y%m%dT%H%M%SZ)}
     mkdir -p "$out" "$state_dir"
     out=$(cd "$out" && pwd)
-    log "mode $mode, logs in $out"
+    log "mode $mode, logs in \$AUTO_OPTIMIZE_OUT_DIR ($(basename "$out"))"
 
     for tool in go git gh jq golangci-lint; do need "$tool"; done
     [[ $mode == dry-run ]] || { need acpx; need agy; }
@@ -106,7 +106,7 @@ main() {
     # 3. Candidates from fixed tools only.
     collect_candidates
     jq -r '.[] | "\(.id) \(.kind) \(.package // "-") \(.message)"' "$out/candidates.json" >"$out/candidates.txt"
-    log "$(wc -l <"$out/candidates.txt" | tr -d ' ') candidate(s), list in $out/candidates.txt"
+    log "$(wc -l <"$out/candidates.txt" | tr -d ' ') candidate(s), list in candidates.txt"
 
     # 4. Pick one, skipping candidates a person rejected or an earlier run abandoned.
     gh pr list -R "$repo_slug" --label "$label" --state closed --limit 1000 \
@@ -158,7 +158,7 @@ main() {
     write_review_comment >"$out/review-comment.md"
     no_secrets "$out/pr-body.md" "$out/review-comment.md"
     if [[ $mode == no-pr ]]; then
-        log "no-pr: change committed on local branch $branch ($head); PR body in $out/pr-body.md"
+        log "no-pr: change committed on local branch $branch ($head); PR body in pr-body.md"
         return 0
     fi
 

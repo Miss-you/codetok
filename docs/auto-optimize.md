@@ -35,7 +35,7 @@ Every decision in steps 1, 3, 5 and 6 (and the candidate list in step 2) is made
 
 ## Credentials and trust
 
-Nothing secret is stored in the repository or the workflow. The job's `GITHUB_TOKEN` is read-only. `git push`, `gh` and `agy` use the runner machine's existing logins (git credential helper, `gh auth`, the Antigravity CLI login), so the PR is authored by the machine's GitHub user and triggers CI. `agy` needs a proxy in a supported region: set `AUTO_OPTIMIZE_PROXY` (default: `AI_REVIEW_PROXY`, `HTTPS_PROXY`, then `http://127.0.0.1:7890`) in the runner's environment.
+Nothing secret is stored in the repository or the workflow. The job's `GITHUB_TOKEN` is read-only. `git push`, `gh` and `agy` use the runner machine's existing logins (git credential helper, `gh auth`, the Antigravity CLI login), so the PR is authored by the machine's GitHub user and triggers CI. This differs from the runner convention of writing with `GITHUB_TOKEN` ([self-hosted-runner.md](self-hosted-runner.md#credentials-and-permissions)) on purpose: a PR opened with `GITHUB_TOKEN` does not start other workflows, so CI would never run on it. `agy` needs a proxy in a supported region: the workflow passes `AI_REVIEW_PROXY` (repository variable, default `http://127.0.0.1:7890`); locally set `AUTO_OPTIMIZE_PROXY` (default: `AI_REVIEW_PROXY`, `HTTPS_PROXY`, then `http://127.0.0.1:7890`). The workflow follows the other runner conventions: it pins the tool `PATH`, pins actions by commit SHA, and logs no local paths.
 
 Limits to be aware of:
 

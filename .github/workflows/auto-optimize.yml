@@ -18,7 +18,8 @@ on:
         default: pr
 
 # The job pushes and opens the PR with the runner machine's own git and gh
-# login, so the PR triggers CI like any human PR. GITHUB_TOKEN gets no rights.
+# login, not GITHUB_TOKEN: a PR opened with GITHUB_TOKEN does not trigger CI,
+# and these PRs must run CI like any human PR. GITHUB_TOKEN gets no rights.
 permissions:
   contents: read
 
@@ -36,12 +37,23 @@ jobs:
       (github.event_name == 'workflow_dispatch' || vars.AUTO_OPTIMIZE_SCHEDULE == 'true')
     runs-on: [self-hosted, codetok-local, ai]
     timeout-minutes: 120
+    env:
+      # Proxy for agy, same convention as scripts/ai-review.sh ("none" = direct).
+      AI_REVIEW_PROXY: ${{ vars.AI_REVIEW_PROXY || 'http://127.0.0.1:7890' }}
     steps:
-      - uses: actions/checkout@v4
+      # Third-party actions are pinned by commit SHA on this runner (docs/self-hosted-runner.md).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           fetch-depth: 0
           persist-credentials: false
+
+      # launchd gives the runner a minimal PATH; pin the tool directories.
+      - name: Pin tool PATH
+        run: |
+          for dir in /opt/homebrew/sbin /opt/homebrew/bin "$HOME/go/bin" "$HOME/.local/bin"; do
+            if [ -d "$dir" ]; then echo "$dir" >> "$GITHUB_PATH"; fi
+          done
 
       - name: Run auto-optimize
         env:
@@ -58,7 +70,7 @@ jobs:
 
       - name: Upload run logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: auto-optimize-${{ github.run_id }}
           # Reports and check output only. Agent transcripts, the raw review
