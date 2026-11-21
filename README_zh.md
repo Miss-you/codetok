@@ -13,6 +13,7 @@
 - **Kimi Code** — 解析 `~/.kimi-code/sessions/**/agents/*/wire.jsonl`
 - **Claude Code** — 解析 `~/.claude/projects/**/*.jsonl`（含流式去重）
 - **Codex CLI** — 设置 `CODEX_HOME` 时解析 `$CODEX_HOME/sessions/**/*.jsonl`，否则解析 `~/.codex/sessions/**/*.jsonl`
+- **Antigravity** — 读取 CLI（`agy`）和 IDE 的会话数据库：`~/.gemini/antigravity-cli/conversations/*.db` 与 `~/.gemini/antigravity/conversations/*.db`
 - **Cursor** — 解析 `~/.codetok/cursor/*.csv`、`~/.codetok/cursor/imports/**/*.csv` 和 `~/.codetok/cursor/synced/**/*.csv` 下的本地 Cursor 用量导出文件
 
 计划支持：
@@ -166,12 +167,13 @@ Rank  CLI     Share   Sessions  Total(m)  Input(m)  Output(m)  Cache Read(m)  Ca
 | `--since` | 起始日期（格式：`2006-01-02`） |
 | `--until` | 截止日期（格式：`2006-01-02`） |
 | `--timezone` | 日期筛选和按日分桶使用的时区；接受 IANA 名称，默认使用本地时区 |
-| `--provider` | 按 Provider 筛选（如 `kimi`、`claude`、`codex`） |
+| `--provider` | 按 Provider 筛选（如 `kimi`、`claude`、`codex`、`antigravity`） |
 | `--base-dir` | 自定义数据目录（所有 Provider 生效） |
 | `--kimi-dir` | 自定义 Kimi Code 数据目录 |
 | `--claude-dir` | 自定义 Claude Code 数据目录 |
 | `--codex-dir` | 自定义 Codex CLI 数据目录 |
 | `--cursor-dir` | 自定义 Cursor CSV 目录；只扫描你提供的本地路径 |
+| `--antigravity-dir` | 自定义 Antigravity 数据根目录（包含 `conversations/` 的目录）；只扫描该目录 |
 
 常用组合：
 - `codetok daily` — 最近 7 天，按 CLI/Provider 分组，表格单位 `m`
@@ -196,7 +198,7 @@ Date        Provider  Session                               Title               
 TOTAL                                                                                  2965044   369854  27973571
 ```
 
-参数：`--json`、`--since`、`--until`、`--timezone`、`--provider`、`--base-dir`、`--kimi-dir`、`--claude-dir`、`--codex-dir`、`--cursor-dir`。
+参数：`--json`、`--since`、`--until`、`--timezone`、`--provider`、`--base-dir`、`--kimi-dir`、`--claude-dir`、`--codex-dir`、`--cursor-dir`、`--antigravity-dir`。
 `--timezone` 接受 IANA 时区名称，默认使用本地时区。
 设置 `--cursor-dir` 后，只会扫描该本地目录。
 
@@ -226,6 +228,10 @@ codetok 读取本地磁盘上的会话数据和用量导出文件。Provider 会
 
 **Kimi Code** — `~/.kimi-code/sessions/<工作目录>/<会话ID>/agents/<agent>/wire.jsonl`
 - 解析 `usage.record` 事件中每次请求的 `usage` 字段；会话内所有 agent 的用量会合并统计
+
+**Antigravity** — `~/.gemini/antigravity-cli/conversations/<会话ID>.db`（CLI）与 `~/.gemini/antigravity/conversations/<会话ID>.db`（IDE）
+- 从 `gen_metadata` 表按每次模型调用读取用量（输入、缓存读取、缓存写入、输出；输出已含 thinking token）
+- 只读打开；有未落盘 WAL 的会话从临时副本读取
 
 **Claude Code** — `~/.claude/projects/<项目slug>/<会话UUID>.jsonl`
 - 解析 `assistant` 事件中的 `message.usage` 字段
@@ -258,6 +264,9 @@ codetok/
 │   ├── provider.go         # Provider 接口和数据类型
 │   ├── registry.go         # Provider 自动注册（init()）
 │   ├── parallel.go         # 有界并行解析工具
+│   ├── antigravity/
+│   │   ├── parser.go       # Antigravity 会话数据库解析器
+│   │   └── wire.go         # 最小 protobuf wire 解析
 │   ├── kimi/
 │   │   └── parser.go       # Kimi Code wire.jsonl 解析器
 │   ├── claude/
