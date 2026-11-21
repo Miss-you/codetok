@@ -9,6 +9,7 @@
   `mode` is `pr` (default), `no-pr` (everything except push and PR; the commit stays on a local `auto-optimize/*` branch on the runner) or `dry-run` (only list candidates and pick one).
 - **Scheduled**: Mondays 02:00 UTC (10:00 Beijing). Scheduled runs are skipped unless the repository variable `AUTO_OPTIMIZE_SCHEDULE` is `true`:
   `gh variable set AUTO_OPTIMIZE_SCHEDULE -R Miss-you/codetok --body true`.
+- **Only the repository owner** can start it: the job runs only when `github.triggering_actor` is the repository owner, because it uses the owner's local `gh` and `agy` logins on the runner. For scheduled runs GitHub uses the user who last changed the `cron` line, so if someone else edits that line, scheduled runs stop until the owner touches it again.
 - **Never** on pull requests (there is no `pull_request` trigger, so fork PRs cannot start it) and never outside `Miss-you/codetok`.
 - Locally: `scripts/auto-optimize.sh --dry-run` on any checkout is read-only. `--no-pr` and the default mode check out `origin/main` and create a branch, so run them only on a clean, disposable checkout.
 

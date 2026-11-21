@@ -78,3 +78,7 @@ Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
 ### PR #62, head a830d78 (round 5)
 
 "Ready to merge? Yes". Critical and Important: none. Minor items applied in the next commit: scan the commit's added lines for tokens before pushing (`no_secrets_in_commit`, tested); strip `**`/`_` from section titles (fixture `boldheading.md`); `die` with a hint if `git commit` fails; `sha256sum` fallback; `--limit 100` on the open-PR query. Separately, CI flagged `auto-optimize.yml` as invalid (`runner.temp` in job-level env), fixed in e0b1908 and checked with actionlint.
+
+### Owner-only trigger (request from the ENG-011 session, approved by the maintainer)
+
+`optimize` job `if:` now also requires `github.triggering_actor == github.repository_owner`, so it stays owner-only if collaborators are added (the job uses the owner's local gh/agy logins). Scheduled runs: GitHub sets `triggering_actor` to the user who last changed the cron line, which is the owner as long as only the owner edits the workflow; documented in `docs/auto-optimize.md`. The same change is being made in #60 (ENG-012).

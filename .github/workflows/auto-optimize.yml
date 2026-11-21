@@ -30,10 +30,15 @@ concurrency:
 jobs:
   optimize:
     name: Propose one cleanup
-    # Only in this repository (never in forks), and scheduled runs only when enabled.
-    # There is no pull_request trigger, so fork PRs can never start it.
+    # Only in this repository (never in forks), only when the repository owner
+    # triggered it (the job runs with the owner's local gh/agy logins), and
+    # scheduled runs only when enabled. For `schedule`, triggering_actor is the
+    # user who last changed the cron line, i.e. the owner as long as only the
+    # owner edits this file. There is no pull_request trigger, so fork PRs can
+    # never start it.
     if: >-
       github.repository == 'Miss-you/codetok' &&
+      github.triggering_actor == github.repository_owner &&
       (github.event_name == 'workflow_dispatch' || vars.AUTO_OPTIMIZE_SCHEDULE == 'true')
     runs-on: [self-hosted, codetok-local, ai]
     timeout-minutes: 120
