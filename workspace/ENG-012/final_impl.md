@@ -7,6 +7,8 @@
 - AI review round 3 (head 8745401, verdict ready to merge): helper marker regex and whole-line check match the Go rule including trailing whitespace; `--inline FILE` resolves from the caller's directory; `--dry-run` checks acpx/agy before creating its directory; duplicate paths in the summary `files` list are rejected.
 - AI review round 2 (head b139b25): the proxy is set before the first gh/git call; the helper rejects a directory without `/` or a file with `/` before posting; inline Python reads UTF-8 explicitly; the marker cannot span lines; the prompt fence is longer than any `~` run in its content.
 - `truncateUTF8` trims only a rune cut by the limit, not the whole buffer, for binary-ish files.
+- AI review round 4 (head 5884ccd, verdict ready to merge): minor findings only, deferred with reasons in the PR comment.
+- AI review round 5 (head 518e0b9, after the push-trigger change, verdict with fixes): `actions/checkout` pinned by commit SHA and asserted for every `uses:` in `workflow_test.go`; agent output echoed on failure is prefixed with `  | ` so it cannot start a `::workflow-command::` (tested); `--inline` without `NAME=FILE` is rejected (tested); `git commit` runs with `commit.gpgsign=false`. The first commit's message no longer contains the literal skip-CI marker, so a squash merge message cannot skip the merge push. Deferred: `ARCHIVE_BRANCH` other than main (Plan only accepts main; not used), rebase-merge diff context, summary file coverage.
 
 ## Archive destination: `docs/changes/<task-id>/`, not `openspec/changes/archive/`
 

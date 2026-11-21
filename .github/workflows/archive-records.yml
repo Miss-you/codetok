@@ -59,7 +59,7 @@ jobs:
           for dir in /opt/homebrew/sbin /opt/homebrew/bin "$HOME/go/bin" "$HOME/.local/bin"; do
             [ -d "$dir" ] && echo "$dir" >> "$GITHUB_PATH"
           done
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           fetch-depth: 0

@@ -194,17 +194,20 @@ if [[ $dry_run -eq 1 ]]; then
     exit 0
 fi
 ai_output=$work/ai-output.txt
+# Model output goes to a public Actions log: prefix every line so none can
+# start a ::workflow-command:: (docs/self-hosted-runner.md).
+show_ai_tail() { tail -n "$1" "$ai_output" | sed 's/^/  | /' >&2 || true; }
 ai_status=0
 "${cmd[@]}" >"$ai_output" 2>&1 || ai_status=$?
 if [[ $ai_status -ne 0 ]]; then
-    tail -n 20 "$ai_output" >&2 || true
+    show_ai_tail 20
     die "acpx exited with status $ai_status; nothing was written. If agy cannot reach its API, see docs/agents/faq/ai-review.md."
 fi
 
 # 4. Validate and write.
 "$tool" finalize --repo "$worktree" --dest "$dest" --stage "$work/stage" --ai-output "$ai_output" >"$work/final.out" || {
     printf 'archive-records: last 40 lines of the agent output:\n' >&2
-    tail -n 40 "$ai_output" >&2
+    show_ai_tail 40
     die "the agy summary was rejected; nothing was written or committed."
 }
 message=$(sed -n 's/^commit_message=//p' "$work/final.out")
@@ -215,7 +218,7 @@ if git -C "$worktree" diff --cached --quiet; then
     say "$dest/$task_id is already up to date; nothing to commit."
     exit 0
 fi
-git -C "$worktree" commit -q -m "$message"
+git -C "$worktree" -c commit.gpgsign=false commit -q -m "$message"
 say "committed: $message"
 if [[ $push -eq 0 ]]; then
     say "--no-push: commit $(git -C "$worktree" rev-parse --short HEAD) left in worktree $worktree"

@@ -32,9 +32,10 @@ while [[ $# -gt 0 ]]; do
         --pr) need_value "$@"; pr=$2; [[ $pr =~ ^[0-9]+$ ]] || die "--pr needs a number" 2; shift 2 ;;
         --task) need_value "$@"; task=$2; shift 2 ;;
         --inline) need_value "$@"
+            [[ $2 == ?*=?* ]] || die "--inline needs NAME=FILE, got: $2" 2
             # FILE is relative to the caller's directory, not the repository root.
             name=${2%%=*} file=${2#*=}
-            [[ $2 == *=* && $file == /* ]] || file=$caller_dir/$file
+            [[ $file == /* ]] || file=$caller_dir/$file
             tool_args+=(--inline "$name=$file"); shift 2 ;;
         --dry-run) dry_run=1; shift ;;
         -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;

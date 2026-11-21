@@ -1,5 +1,7 @@
 # ENG-012 Final Implementation v1
 
+> Superseded on the trigger: v1 used `pull_request: closed`; final_impl.md moves to `push` to main, owner only.
+
 Adopts new_impl.md with these decisions:
 
 - Trust: on a public repo anyone can comment, so only marker comments whose `author_association` is OWNER, MEMBER or COLLABORATOR count; others are logged and ignored. More than one trusted marker comment is an error (the helper keeps one).

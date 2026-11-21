@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -234,10 +235,14 @@ func TestArchiveScriptEndToEnd(t *testing.T) {
 
 	t.Run("invalid AI output fails without writing", func(t *testing.T) {
 		e.setPR(60, false, recordsComment(t, Records{TaskID: "ENG-060", Paths: []string{"workspace/ENG-012/todo.md"}}))
-		e.setAI("I could not do it.\n")
+		e.setAI("I could not do it.\n::error::injected\n")
 		out, err := e.run(60)
 		if err == nil || e.originHead() != after || !strings.Contains(out, "nothing was written") {
 			t.Fatalf("err=%v head changed=%v\n%s", err, e.originHead() != after, out)
+		}
+		// Echoed model output must not start a GitHub Actions workflow command.
+		if regexp.MustCompile(`(?m)^\s*::`).MatchString(out) || !strings.Contains(out, "  | ::error::injected") {
+			t.Fatalf("agent output echoed without a prefix:\n%s", out)
 		}
 	})
 }
@@ -289,6 +294,11 @@ esac
 	t.Run("no paths", func(t *testing.T) {
 		if out, _, err := run("", ""); err == nil || !strings.Contains(out, "list at least one path") {
 			t.Fatalf("err=%v\n%s", err, out)
+		}
+	})
+	t.Run("inline without NAME=FILE", func(t *testing.T) {
+		if out, calls, err := run("", "", "--inline", "notes.md"); err == nil || !strings.Contains(out, "needs NAME=FILE") || calls != "" {
+			t.Fatalf("err=%v gh calls=%q\n%s", err, calls, out)
 		}
 	})
 	for name, bad := range map[string]string{

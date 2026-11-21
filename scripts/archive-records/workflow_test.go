@@ -47,6 +47,12 @@ func TestArchiveWorkflowGuards(t *testing.T) {
 			t.Errorf("workflow is missing %q", want)
 		}
 	}
+	// Third-party actions on the self-hosted runner are pinned by commit SHA.
+	for _, m := range regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*(\S+)`).FindAllStringSubmatch(wf, -1) {
+		if !regexp.MustCompile(`@[0-9a-f]{40}$`).MatchString(m[1]) {
+			t.Errorf("action %s is not pinned by commit SHA", m[1])
+		}
+	}
 	for _, banned := range []string{"pull_request:", "pull_request_target", "issue_comment", "github.event.pull_request", "secrets.", "github.event.comment"} {
 		if strings.Contains(wf, banned) {
 			t.Errorf("workflow must not contain %q", banned)
