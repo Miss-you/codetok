@@ -63,6 +63,19 @@ jobs:
 Add `github.repository == 'Miss-you/codetok'` as well when the job should do nothing in
 forks of the repository.
 
+Every job on `[self-hosted, codetok-local]` also carries an owner check, so only runs the
+repository owner triggered reach this runner:
+
+```yaml
+    if: >-
+      github.repository == 'Miss-you/codetok' &&
+      github.triggering_actor == github.repository_owner
+```
+
+(combine it with the `pull_request` guard above with `&&`). These jobs run on the
+maintainer's Mac with the local `gh` / `agy` credentials. Today the owner is the only
+collaborator; the check keeps the runner owner-only if collaborators are added later.
+
 **The guard is hygiene, not the security boundary.** For `pull_request` events GitHub
 runs the workflow files from the PR's merge commit, so a fork PR can delete the `if:` or
 add its own job with `runs-on: [self-hosted, ...]`. GitHub advises against self-hosted

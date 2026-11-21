@@ -22,8 +22,9 @@ concurrency:
 jobs:
   smoke:
     name: Smoke (self-hosted, codetok-local, ai)
-    # Forks that copy this workflow must not try to schedule onto a runner they do not have.
-    if: github.repository == 'Miss-you/codetok'
+    # Forks that copy this workflow must not try to schedule onto a runner they do not have,
+    # and only runs the repository owner triggered may use the maintainer's Mac.
+    if: github.repository == 'Miss-you/codetok' && github.triggering_actor == github.repository_owner
     runs-on: [self-hosted, macOS, ARM64, codetok-local, ai]
     timeout-minutes: 30
     env:
