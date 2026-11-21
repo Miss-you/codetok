@@ -79,8 +79,8 @@ main() {
     if [[ $mode != dry-run ]]; then
         [[ -z $(git status --porcelain) ]] || die "the working tree is not clean; refusing to run"
         setup_proxy
-    elif [[ -n ${AUTO_OPTIMIZE_PROXY:-} ]]; then
-        setup_proxy # a dry run uses the proxy only when it is set explicitly
+    elif [[ -n ${AUTO_OPTIMIZE_PROXY:-}${AI_REVIEW_PROXY:-} ]]; then
+        setup_proxy # a dry run uses the proxy only when one is set explicitly
     fi
     if [[ $mode == pr ]]; then
         gh label list -R "$repo_slug" --search "$label" --limit 100 --json name --jq '.[].name' | grep -qxF "$label" \
@@ -259,6 +259,7 @@ guard_check() {
     # so nothing the agent planted survives on the runner.
     local common p
     common=$(git rev-parse --path-format=absolute --git-common-dir)
+    rm -f "$common/config" # replace, not write through, in case it became a symlink
     cp -p "$out/git-backup/config" "$common/config"
     local gitdir
     gitdir=$(git rev-parse --absolute-git-dir)
@@ -544,8 +545,13 @@ EOF
 # review_answer prints the reviewer's answer only, from its first Markdown
 # heading or bold title line on, without the acpx trace (tool calls, file reads).
 review_answer() {
-    awk '/^#{1,6} / || /^\*\*[^*]+\*\*:?[[:space:]]*$/ {on=1}
-         on && !/^\[(client|tool|done|thinking)\]/ && !/^  (input|output|kind|files):/' "$out/review/review.md" \
+    # A trace block is a [tool]/[client]/[thinking]/[done] line plus the
+    # indented (or blank) lines after it, which can quote file contents.
+    awk '/^\[(client|tool|done|thinking)\]/ {tr=1; next}
+         tr && (/^  / || /^[[:space:]]*$/) {next}
+         {tr=0}
+         /^#{1,6} / || /^\*\*[^*]+\*\*:?[[:space:]]*$/ {on=1}
+         on' "$out/review/review.md" \
         | relative_paths
 }
 

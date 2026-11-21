@@ -242,26 +242,30 @@ func sectionFor(title string) string {
 // text in those sections other than "None" counts as at least one issue, so
 // free-form findings are not missed.
 func reviewVerdict(review string) (bool, string) {
-	m := verdictLine.FindAllStringSubmatch(review, -1)
-	if m == nil {
-		return false, "the review has no \"Ready to merge?\" verdict"
-	}
-	verdict := strings.ToLower(m[len(m)-1][1])
-
+	verdict := ""
 	sections := map[string][]string{}
 	seen := map[string]bool{}
-	section, inFence := "", false
+	section, inFence, inTrace := "", false, false
 	for _, line := range strings.Split(review, "\n") {
+		// An acpx trace block is a "[tool] ..." (or [client]/[thinking]) line
+		// followed by indented lines with its input and output, which can
+		// quote file contents. None of it is the reviewer's answer.
 		if traceLine.MatchString(line) {
+			inTrace = true
 			continue
 		}
+		if inTrace && (strings.HasPrefix(line, "  ") || strings.TrimSpace(line) == "") {
+			continue
+		}
+		inTrace = false
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 			inFence = !inFence
 		}
 		if !inFence {
-			if verdictLine.MatchString(line) {
-				section = "" // a verdict line ends the issue list even without a heading
+			if v := verdictLine.FindStringSubmatch(line); v != nil {
+				verdict = strings.ToLower(v[1]) // the last verdict outside traces and fences wins
+				section = ""                    // a verdict line ends the issue list even without a heading
 				continue
 			}
 			title := ""
@@ -283,6 +287,9 @@ func reviewVerdict(review string) (bool, string) {
 		if section != "" && trimmed != "" {
 			sections[section] = append(sections[section], line)
 		}
+	}
+	if verdict == "" {
+		return false, "the review has no \"Ready to merge?\" verdict"
 	}
 	if !seen["critical"] || !seen["important"] {
 		return false, "the review has no Critical and Important sections to check"

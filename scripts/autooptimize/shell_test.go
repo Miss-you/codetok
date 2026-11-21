@@ -115,7 +115,10 @@ func TestShellReviewAnswer(t *testing.T) {
 		"- Clean change in [cmd/a.go](file://" + repo + "/cmd/a.go#L3).",
 		"- Also read " + home + "/other/project/x.go.",
 		"[tool] Read file (completed)",
-		"  output: secret file text",
+		"  output:",
+		"    secret file text",
+		"",
+		"    more secret text",
 		"#### Critical (Must Fix)",
 		"None.",
 		"[done] end_turn",
@@ -127,7 +130,7 @@ func TestShellReviewAnswer(t *testing.T) {
 	if !strings.HasPrefix(out, "### Strengths\n") {
 		t.Errorf("answer does not start at the first heading: %q", out)
 	}
-	for _, bad := range []string{"[tool]", "[done]", "input:", "output:", "hosts.yml", repo, home} {
+	for _, bad := range []string{"[tool]", "[done]", "input:", "output:", "hosts.yml", "secret", repo, home} {
 		if strings.Contains(out, bad) {
 			t.Errorf("answer contains %q:\n%s", bad, out)
 		}

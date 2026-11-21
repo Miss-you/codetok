@@ -82,3 +82,14 @@ Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
 ### Owner-only trigger (request from the ENG-011 session, approved by the maintainer)
 
 `optimize` job `if:` now also requires `github.triggering_actor == github.repository_owner`, so it stays owner-only if collaborators are added (the job uses the owner's local gh/agy logins). Scheduled runs: GitHub sets `triggering_actor` to the user who last changed the cron line, which is the owner as long as only the owner edits the workflow; documented in `docs/auto-optimize.md`. The same change is being made in #60 (ENG-012).
+
+### PR #62, head bd58ab5 (round 7, after merging main)
+
+Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
+
+| Finding | Level | Action |
+| --- | --- | --- |
+| `reviewVerdict` took the verdict from the raw text, so a "Ready to merge?" quoted in tool output or a code fence could count | Important | The verdict is read inside the line loop, skipping whole acpx trace blocks (the `[tool]` line plus its indented/blank lines) and fences. Fixtures `traceverdict.md`, `fenceverdict.md`. `review_answer` strips whole trace blocks the same way; shell test extended. |
+| `.git/config` restored with `cp -p` through a possible symlink | Minor | `rm -f` first. |
+| Dry run ignored `AI_REVIEW_PROXY` | Minor | Proxy set when either variable is set. |
+| PR description still listed the label as to-do | Minor | Description updated; the label exists. |

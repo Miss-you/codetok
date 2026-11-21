@@ -379,6 +379,8 @@ func TestReviewVerdict(t *testing.T) {
 		{"summarytitle.md", true, "no Critical/Important"},
 		{"trace.md", true, "no Critical/Important"},
 		{"boldheading.md", false, "1 Critical/Important"},
+		{"traceverdict.md", false, "no \"Ready to merge?\""},
+		{"fenceverdict.md", false, "reviewer answered \"Ready to merge? No\""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
