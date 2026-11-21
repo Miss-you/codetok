@@ -93,3 +93,17 @@ Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
 | `.git/config` restored with `cp -p` through a possible symlink | Minor | `rm -f` first. |
 | Dry run ignored `AI_REVIEW_PROXY` | Minor | Proxy set when either variable is set. |
 | PR description still listed the label as to-do | Minor | Description updated; the label exists. |
+
+### PR #62, head 9c9cfd8 (round 8)
+
+Critical: none. "Ready to merge? With fixes". Fixed in the next commit:
+
+| Finding | Level | Action |
+| --- | --- | --- |
+| `no_secrets_in_commit` failed open on large diffs: `grep -q` exits on the first match, the writer gets SIGPIPE, `pipefail` makes the `if` false | Important | Added lines are written to a file and scanned there. Reproduced: the old pipeline missed a token in a ~250 KB diff; the new shell test with such a diff gives up. |
+| `gh label list | grep -q` has the same shape | Minor | Output captured in a variable first. |
+| `verdictLine` required `?` | Minor | Also accepts `Ready to merge: Yes`; fixture. |
+| `gh pr comment` failure left a PR without its review comment | Minor | One retry; then a job-summary note and a failed run. |
+| Coverage candidate ID changed with the percentage | Minor | Coverage IDs hash the package, not the message; test. |
+| `**Important: <issue>**` single bold line dropped the issue | Minor | Text after the colon counts as an issue; fixture. |
+| `gofmt` before the scope check; `jq` missing from the runner doc | Minor | Not changed: `gofmt` only rewrites staged Go files and out-of-scope ones are reverted next; `jq` is at `/usr/bin/jq` on macOS. |

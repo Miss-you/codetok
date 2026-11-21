@@ -204,7 +204,7 @@ func nextRound(file string, maxRounds int) (int, bool, error) {
 }
 
 var (
-	verdictLine = regexp.MustCompile(`(?i)ready to merge\?\**\s*:?\s*\**\s*(yes|no|with fixes)`)
+	verdictLine = regexp.MustCompile(`(?i)ready to merge\s*[?:]?\**\s*:?\s*\**\s*(yes|no|with fixes)`)
 	headingLine = regexp.MustCompile(`^#{1,6}\s+(.*)$`)
 	boldLine    = regexp.MustCompile(`^\*\*([^*]+)\*\*:?$`) // a whole line in bold, used as a title
 	itemLine    = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+(.*)$`)
@@ -278,6 +278,11 @@ func reviewVerdict(review string) (bool, string) {
 				section = next
 				if next != "other" {
 					seen[next] = true
+					// "**Important: changes JSON output**" names an issue in
+					// the title itself; keep it as one.
+					if _, rest, ok := strings.Cut(title, ":"); ok && noneItem.FindString(strings.Trim(rest, "*_ ")) == "" && strings.TrimSpace(strings.Trim(rest, "*_ ")) != "" {
+						sections[next] = append(sections[next], strings.TrimSpace(rest))
+					}
 				} else {
 					section = ""
 				}

@@ -115,8 +115,14 @@ func candidateID(parts ...string) string {
 
 func finalize(c Candidate) Candidate {
 	// The line number is left out of the ID so unrelated edits above a finding
-	// do not turn it into a "new" candidate.
-	c.ID = candidateID(c.Kind, c.Package, c.File, c.Source, c.Message)
+	// do not turn it into a "new" candidate. A coverage candidate is the
+	// package itself: its percentage changes with every edit, so it is left
+	// out too, and a rejected coverage PR stays rejected.
+	msg := c.Message
+	if c.Kind == KindCoverage {
+		msg = ""
+	}
+	c.ID = candidateID(c.Kind, c.Package, c.File, c.Source, msg)
 	return c
 }
 

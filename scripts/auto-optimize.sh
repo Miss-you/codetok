@@ -83,7 +83,10 @@ main() {
         setup_proxy # a dry run uses the proxy only when one is set explicitly
     fi
     if [[ $mode == pr ]]; then
-        gh label list -R "$repo_slug" --search "$label" --limit 100 --json name --jq '.[].name' | grep -qxF "$label" \
+        local labels
+        labels=$(gh label list -R "$repo_slug" --search "$label" --limit 100 --json name --jq '.[].name') \
+            || die "cannot list labels in $repo_slug"
+        grep -qxF "$label" <<<"$labels" \
             || die "label '$label' does not exist in $repo_slug; create it first (docs/auto-optimize.md)"
     fi
 
@@ -166,7 +169,11 @@ main() {
     git push -q -u origin "$branch"
     pr_url=$(gh pr create -R "$repo_slug" --base "$base_branch" --head "$branch" \
         --title "chore(auto-optimize): $cand_title" --body-file "$out/pr-body.md" --label "$label")
-    gh pr comment "$pr_url" -R "$repo_slug" --body-file "$out/review-comment.md" >/dev/null
+    if ! gh pr comment "$pr_url" -R "$repo_slug" --body-file "$out/review-comment.md" >/dev/null \
+        && ! { sleep 10; gh pr comment "$pr_url" -R "$repo_slug" --body-file "$out/review-comment.md" >/dev/null; }; then
+        summary "Opened $pr_url, but posting the AI review comment failed twice; post review-comment.md from the run artifact by hand."
+        die "opened $pr_url but could not post the AI review comment"
+    fi
     log "opened $pr_url"
     summary "Opened $pr_url for candidate \`$cand_id\` ($cand_title)."
 }
@@ -292,10 +299,18 @@ no_secrets() {
 }
 
 # no_secrets_in_commit refuses to push a change that adds token-like strings.
+# The added lines go to a file first: with pipefail, `grep -q` exiting early
+# would SIGPIPE the writer and turn a match into a failed (false) pipeline.
 no_secrets_in_commit() {
-    if git diff "$base" "$head" | grep '^+' | has_secrets -; then
+    local added="$out/commit-added.txt"
+    git diff "$base" "$head" >"$out/commit.diff" || die "git diff failed"
+    grep '^+' "$out/commit.diff" >"$added" || true
+    rm -f "$out/commit.diff"
+    if has_secrets "$added"; then
+        rm -f "$added"
         give_up "the change adds a token-like string; nothing was pushed"
     fi
+    rm -f "$added"
 }
 
 collect_candidates() {

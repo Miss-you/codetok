@@ -137,6 +137,11 @@ func TestCandidateIDIgnoresLineNumbers(t *testing.T) {
 	if a.ID == c.ID || len(a.ID) != 12 {
 		t.Errorf("IDs %q %q", a.ID, c.ID)
 	}
+	cov1 := finalize(Candidate{Kind: KindCoverage, Package: "cursor", Source: "go test -cover", Message: "statement coverage 52.0% is below 60%"})
+	cov2 := finalize(Candidate{Kind: KindCoverage, Package: "cursor", Source: "go test -cover", Message: "statement coverage 55.4% is below 60%"})
+	if cov1.ID != cov2.ID {
+		t.Error("coverage candidate ID changes with the percentage")
+	}
 }
 
 func TestCollectIsSortedByKindAndDeterministic(t *testing.T) {
@@ -381,6 +386,8 @@ func TestReviewVerdict(t *testing.T) {
 		{"boldheading.md", false, "1 Critical/Important"},
 		{"traceverdict.md", false, "no \"Ready to merge?\""},
 		{"fenceverdict.md", false, "reviewer answered \"Ready to merge? No\""},
+		{"colonverdict.md", true, "no Critical/Important"},
+		{"boldinline.md", false, "1 Critical/Important"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {

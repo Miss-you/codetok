@@ -274,7 +274,7 @@ func TestShellNoSecretsInCommit(t *testing.T) {
 		writeFile(t, repo, "cmd/a.go", content)
 		git(t, repo, "add", "-A")
 		git(t, repo, "commit", "-q", "-m", "change")
-		_, code := runShell(t, repo, `base=$(git rev-parse HEAD~1) head=$(git rev-parse HEAD); no_secrets_in_commit; echo ok`)
+		_, code := runShell(t, repo, `set -o pipefail; out=$OUT base=$(git rev-parse HEAD~1) head=$(git rev-parse HEAD); no_secrets_in_commit; echo ok`, "OUT="+t.TempDir())
 		return code
 	}
 	if code := run("package cmd\n\n// task-auto-optimize-candidate-selection-notes\n"); code != 0 {
@@ -282,5 +282,12 @@ func TestShellNoSecretsInCommit(t *testing.T) {
 	}
 	if code := run("package cmd\n\nconst k = \"ghp_" + strings.Repeat("Z7", 18) + "\"\n"); code != 3 {
 		t.Errorf("added token: code %d, want give_up", code)
+	}
+	// A diff far larger than a pipe buffer, token near the top: an early
+	// match must still stop the push (pipefail + SIGPIPE used to hide it).
+	big := "package cmd\n\nconst k = \"ghp_" + strings.Repeat("Y8", 18) + "\"\n" +
+		strings.Repeat("// filler line for a large diff, well past the pipe buffer size\n", 4000)
+	if code := run(big); code != 3 {
+		t.Errorf("token in a large diff: code %d, want give_up", code)
 	}
 }
