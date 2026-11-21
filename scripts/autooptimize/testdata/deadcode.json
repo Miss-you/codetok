@@ -1,0 +1,9 @@
+[
+ {"Name":"stats","Path":"github.com/miss-you/codetok/stats","Funcs":[
+  {"Name":"FilterByDateRange","Position":{"File":"stats/aggregator.go","Line":90,"Col":6},"Generated":false},
+  {"Name":"genThing","Position":{"File":"stats/gen.go","Line":3,"Col":6},"Generated":true}]},
+ {"Name":"testutil","Path":"github.com/miss-you/codetok/internal/testutil","Funcs":[
+  {"Name":"WriteDB","Position":{"File":"internal/testutil/db.go","Line":21,"Col":6},"Generated":false}]},
+ {"Name":"cmd","Path":"github.com/miss-you/codetok/cmd","Funcs":[
+  {"Name":"collectUsageEvents","Position":{"File":"cmd/collect.go","Line":12,"Col":6},"Generated":false}]}
+]

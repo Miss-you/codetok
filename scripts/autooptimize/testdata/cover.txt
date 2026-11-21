@@ -1,0 +1,8 @@
+	github.com/miss-you/codetok		coverage: 0.0% of statements
+ok  	github.com/miss-you/codetok/cmd	0.038s	coverage: 83.4% of statements
+ok  	github.com/miss-you/codetok/cursor	0.077s	coverage: 72.3% of statements
+ok  	github.com/miss-you/codetok/e2e	310.107s	coverage: [no statements]
+	github.com/miss-you/codetok/internal/testutil		coverage: 0.0% of statements
+ok  	github.com/miss-you/codetok/provider	0.187s	coverage: 55.0% of statements
+ok  	github.com/miss-you/codetok/scripts/autooptimize	0.1s	coverage: 10.0% of statements
+ok  	github.com/miss-you/codetok/stats	(cached)	coverage: 85.2% of statements
