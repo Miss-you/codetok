@@ -1,4 +1,4 @@
-# Smoke test for the self-hosted macOS runner (ENG-011, issue #56).
+# Smoke test for the self-hosted macOS runner pool (ENG-011 #56, ENG-014 #63).
 #
 # Manual trigger only. It proves that the runner service on the maintainer's Mac
 # can build and test codetok and can call the local AI tools (acpx / agy) with the
@@ -14,15 +14,17 @@ on:
 permissions:
   contents: read
 
+# One smoke run per ref at a time; different refs can use different pool instances.
 concurrency:
-  group: runner-smoke
+  group: runner-smoke-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   smoke:
     name: Smoke (self-hosted, codetok-local, ai)
-    # Forks that copy this workflow must not try to schedule onto a runner they do not have.
-    if: github.repository == 'Miss-you/codetok'
+    # Forks that copy this workflow must not try to schedule onto a runner they do not have,
+    # and only runs the repository owner triggered may use the maintainer's Mac.
+    if: github.repository == 'Miss-you/codetok' && github.triggering_actor == github.repository_owner
     runs-on: [self-hosted, macOS, ARM64, codetok-local, ai]
     timeout-minutes: 30
     env:
@@ -30,9 +32,15 @@ jobs:
       # Override with the repository variable AI_REVIEW_PROXY ("none" = direct).
       AI_REVIEW_PROXY: ${{ vars.AI_REVIEW_PROXY || 'http://127.0.0.1:7890' }}
     steps:
+      # The runner keeps _work between jobs, so after the first job on an instance this is
+      # an incremental fetch into the existing .git, not a clone. fetch-depth: 0 is cheap
+      # then and gives origin/main for merge-base. clean: true (the default, spelled out)
+      # runs git clean -ffdx + reset --hard; the pool's job hooks do the same before and
+      # after every job (scripts/runner/job-hook.sh).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          clean: true
           persist-credentials: false
 
       # launchd starts the runner with a minimal environment. The runner adds the
@@ -54,6 +62,19 @@ jobs:
           done
           go version
           exit "$missing"
+
+      # Pool contract (ENG-014): hooks configured, Go caches shared outside the workspace,
+      # tree clean after checkout. Prints yes/no only, no paths.
+      - name: Check runner pool setup
+        run: |
+          fail=0
+          check() { if eval "$2"; then echo "$1: yes"; else echo "$1: NO"; fail=1; fi; }
+          check "job hooks configured" '[ -n "${ACTIONS_RUNNER_HOOK_JOB_STARTED:-}" ] && [ -n "${ACTIONS_RUNNER_HOOK_JOB_COMPLETED:-}" ]'
+          check "shared GOMODCACHE" 'case "$(go env GOMODCACHE)" in */actions-runner/_shared/cache/*) true ;; *) false ;; esac'
+          check "shared GOCACHE" 'case "$(go env GOCACHE)" in */actions-runner/_shared/cache/*) true ;; *) false ;; esac'
+          check "clean tree after checkout" '[ -z "$(git status --porcelain --ignored)" ]'
+          echo "runner: $RUNNER_NAME"
+          exit "$fail"
 
       - name: make build
         run: make build
