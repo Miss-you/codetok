@@ -3,12 +3,14 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -84,20 +86,45 @@ func crossDayProviderArgs(t *testing.T) []string {
 	}
 }
 
-// buildBinary builds the codetok binary and returns its path.
-func buildBinary(t *testing.T) string {
-	t.Helper()
-	binPath := filepath.Join(t.TempDir(), "codetok")
+// binDir holds the codetok binary shared by every test in this package.
+// TestMain creates it before the tests run and removes it afterwards.
+var binDir string
 
+// buildOnce compiles codetok at most once per package run. It uses the
+// inherited GOCACHE so local, CI and self-hosted runner caches apply;
+// tests stay isolated through their own data dirs (see isolatedArgs).
+var buildOnce = sync.OnceValues(func() (string, error) {
 	moduleRoot, err := filepath.Abs("..")
 	if err != nil {
-		t.Fatalf("failed to get module root: %v", err)
+		return "", fmt.Errorf("getting module root: %w", err)
 	}
-
+	binPath := filepath.Join(binDir, "codetok")
 	cmd := exec.Command("go", "build", "-o", binPath, moduleRoot)
-	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(t.TempDir(), "gocache"))
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("failed to build codetok: %v\n%s", err, out)
+		return "", fmt.Errorf("building codetok: %w\n%s", err, out)
+	}
+	return binPath, nil
+})
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "codetok-e2e-bin-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "creating binary dir: %v\n", err)
+		os.Exit(1)
+	}
+	binDir = dir
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// buildBinary returns the path to the codetok binary, building it on first use.
+// The binary is shared and must not be modified by tests.
+func buildBinary(t *testing.T) string {
+	t.Helper()
+	binPath, err := buildOnce()
+	if err != nil {
+		t.Fatalf("failed to build codetok: %v", err)
 	}
 	return binPath
 }
