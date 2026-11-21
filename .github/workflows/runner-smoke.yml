@@ -76,6 +76,7 @@ jobs:
             export HTTPS_PROXY="$AI_REVIEW_PROXY" HTTP_PROXY="$AI_REVIEW_PROXY"
             export NO_PROXY=localhost,127.0.0.1,::1,.local
           fi
+          trap 'echo "::error title=agy call failed::\"authentication required\" usually means the runner LaunchAgent has SessionCreate=true again (after ./svc.sh install) or the agy login expired. See docs/self-hosted-runner.md, Troubleshooting."' ERR
           out=$(agy -p 'Reply with exactly this JSON and nothing else: {"ok": true}' \
             --output-format json --print-timeout 180s)
           # Print only pass/fail, never the raw payload or model-controlled text
